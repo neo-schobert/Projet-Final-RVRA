@@ -1,0 +1,253 @@
+\documentclass[a4paper, 12pt, hidelinks]{article}
+\usepackage{bookmark}
+\usepackage[utf8]{inputenc} 
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{graphicx}
+\usepackage{natbib}
+\usepackage[french]{babel}
+\usepackage{geometry}
+\usepackage{eucal}
+\usepackage{caption}
+\usepackage{float}
+\usepackage{url}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{color}
+\usepackage{hyperref}
+\usepackage{cancel}
+\usepackage{tikz}
+\usepackage{mathrsfs}  
+\usepackage{esvect}
+\usepackage[standard]{ntheorem}
+\usepackage{romanbar}
+\usepackage{titlesec}
+\usepackage[final]{pdfpages}
+\usepackage{soul}
+\usepackage{setspace}
+\usepackage{multicol}
+\usepackage{comment}
+\usepackage{gensymb}
+\usepackage{graphics}
+\usepackage{sectsty}
+\usepackage{fancyhdr}
+\usepackage{mdframed}
+\usepackage{fullpage}
+\usepackage{libertine}
+\usepackage{tocloft}
+\usepackage{atbegshi}
+\usepackage{tabularx}
+\usepackage{matlab-prettifier}
+\usepackage{enumitem}
+\usepackage{natbib}
+\usepackage{colortbl}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{multirow}
+
+
+\pagestyle{fancy}
+\setlength{\marginparwidth}{10pt}
+\setlength{\textwidth}{550pt}
+\setlength{\headheight}{26pt}
+\renewcommand{\headrulewidth}{1pt}
+\fancyhead[C]{}
+
+\fancyhead[L]{\includegraphics[width = 0.07\textwidth]{entete.png}}
+
+\fancyhead[R]{\textbf{Mixed Reality
+}}
+
+\renewcommand{\footrulewidth}{1pt}
+\fancyfoot[L]{\textbf{page \thepage}} 
+\fancyfoot[C]{}
+\fancyfoot[R]{BENTATA Hugo - SCHOBERT Néo - Montadhar ETTAIEB}
+
+%Pour les colonnes
+\setlength{\columnseprule}{0.05cm}
+\def\columnseprulecolor{\color{CornflowerBlue}}
+
+\renewcommand{\thesection}{\Roman{section}}
+
+\definecolor{CornflowerBlue}{rgb}{0.392,0.584,0.929}
+
+
+\newcommand{\ma}{Groupe MA }
+
+\definecolor{TopBlue}{RGB}{1, 184, 223}
+
+\definecolor{SweetBlue}{RGB}{203, 231, 242}
+
+\definecolor{LightBlue}{RGB}{230, 242, 249}
+
+
+\geometry{hmargin=2.5cm,vmargin=2cm}
+
+\setstretch{1.15}
+
+\tikzset{
+  treenode/.style = {shape=rectangle, rounded corners,
+                     draw, align=center,
+                     top color=white, bottom color=blue!5},
+  root/.style     = {treenode, font=\Large, bottom color=red!10},
+  env/.style      = {treenode, font=\ttfamily\normalsize},
+  dummy/.style    = {circle,draw}
+}
+
+\newcommand{\prp}{\large \underline{\textcolor{red}{\textbf{Proposition:}}} \large \newline}
+
+\newcommand{\tm}{\large \underline{\textcolor{purple}{\textbf{Théoreme:}}} \large \newline}
+
+\newcommand{\ex}{\underline{\textcolor{green}{Exemple:}} \newline}
+
+\newcommand{\dm}{\underline{\textcolor{red}{\textbf{Démo:}} } \newline}
+
+\newcommand{\de}{\large \underline{\textcolor{teal}{\textbf{Définition:}}} \large \newline}
+
+\newcommand{\rmq}{\underline{\textbf{Remarque:}} \newline}
+
+\newcommand{\bs}{\bigskip}
+
+\newcommand{\voca}{\textcolor{blue}{\textbf{Vocabulaire} } }
+
+\newcommand{\lem}{\textcolor{red}{\textbf{Lemme:} } }
+
+\newcommand{\rb}[1]{\Romanbar{#1}}
+
+\newcommand{\cit}{\textcolor{blue}{\textbf{Citation: }}}
+
+\definecolor{authorGray}{RGB}{20,20,20}
+\definecolor{citationRed}{RGB}{255,110,110}
+\definecolor{surlignage}{RGB}{255,249,151}
+
+\newcommand{\citer}[3]{\bs\begin{center} \textcolor{authorGray}{#1:} \textcolor{citationRed}{\og#2 \fg} \textcolor{authorGray}{(\underline{#3})} \end{center} \bs}
+
+\newcommand{\trinom}[3]{\begin{pmatrix}
+    #1 \\
+    #2 \\
+    #3
+\end{pmatrix}}
+
+\newcommand{\quadrinom}[4]{\begin{pmatrix}
+    #1 \\
+    #2 \\
+    #3 \\
+    #4 \\
+\end{pmatrix}}
+
+\newcommand{\pentanom}[5]{\begin{pmatrix}
+    #1 \\
+    #2 \\
+    #3 \\
+    #4 \\
+    #5
+\end{pmatrix}}
+
+\newcommand{\hexanom}[6]{\begin{pmatrix}
+    #1 \\
+    #2 \\
+    #3 \\
+    #4 \\
+    #5 \\
+    #6 
+\end{pmatrix}}
+
+
+\newcommand{\serie}[2]{\displaystyle\sum_{#1 =0}^{+\infty} #2_{#1} }
+
+\newcommand{\tend}{\underset{n \to+ \infty}{\longrightarrow} }
+
+\newcommand{\Lra}{\Leftrightarrow}
+
+\newcommand{\lra}{\leftrightarrow}
+
+\newcommand{\Ra}{\Rightarrow}
+
+\newcommand{\ra}{\rightarrow}
+
+\newcommand{\la}{\leftarrow}
+
+\newcommand{\La}{\Leftarrow}
+
+\newcommand{\dsum}[2]{\displaystyle\sum_{#1}^{#2} }
+
+\newcommand{\dint}[2]{\displaystyle\int_{#1}^{#2} }
+
+\newcommand{\ntend}{\underset{n \to+ \infty}{\not\longrightarrow} }
+
+\newenvironment{lmatrix}{$ \left|\begin{array}{l} }{\end{array}\right .$}
+
+
+\setlength{\parindent}{0cm}
+\setlength{\parskip}{1ex plus 0.5ex minus 0.2ex}
+\newcommand{\hsp}{\hspace{20pt}}
+\newcommand{\HRule}{\rule{\linewidth}{0.5mm}}
+
+
+\newcommand{\img}[4]{\begin{figure}[!ht]
+    \centering
+    \includegraphics[scale=#1 ]{#2}
+    \caption{#3}\label{#4}
+    \end{figure} }    
+
+\newcommand{\grad}[1]{\vv{grad}#1}
+
+\sethlcolor{surlignage}
+
+
+
+\definecolor{darkblue}{RGB}{0, 184, 222}
+\definecolor{mediumblue}{RGB}{203, 231, 242}
+\definecolor{lightblue}{RGB}{231, 243, 249}
+
+\begin{document}
+
+
+\begin{titlepage}
+    \begin{sffamily}
+    \begin{center}
+  
+      % Upper part of the page. The '~' is needed because \\
+      % only works if a paragraph has started.
+      \includegraphics[scale=1]{entete.png}~\\[1.5cm]
+  
+      \textsc{\LARGE IMT Atlantique}\\[2cm]
+  
+      \textsc{\Large }\\[1.5cm]
+  
+      % Title
+      \HRule \\[0.4cm]
+      { \huge \bfseries Mixed Reality\\[0.4cm] }
+  
+      \HRule \\[2cm]
+  
+      % Author and supervisor
+      \begin{minipage}{0.4\textwidth}
+        \begin{flushleft} \large
+          BENTATA Hugo - SCHOBERT Néo - Montadhar ETTAIEB \\
+        \end{flushleft}
+      \end{minipage}
+      \begin{minipage}{0.4\textwidth}
+        \begin{flushright} \large
+          \textbf{Projet RVRA}
+        \end{flushright}
+      \end{minipage}
+  
+      \vfill
+  
+  
+    \end{center}
+    \end{sffamily}
+\end{titlepage}
+
+
+
+\tableofcontents
+
+\newpage
+
+
+\vspace*{-0.5cm}
+
+
+\end{document}

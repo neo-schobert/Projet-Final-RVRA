@@ -31,6 +31,7 @@ public class ARConnectionManager : MonoBehaviour
                 MaxPlayers = 4,
                 Name = "Session_RVRA" // Un nom unique pour la retrouver
             };
+            options.WithDistributedAuthorityNetwork();
 
             await MultiplayerService.Instance.CreateSessionAsync(options);
             Debug.Log("Session AR (Autorité Distribuée) créée avec succès sur les serveurs d'Unity !");

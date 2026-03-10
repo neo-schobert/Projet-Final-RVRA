@@ -710,19 +710,7 @@ MonoBehaviour:
       m_Calls: []
   m_Activated:
     m_PersistentCalls:
-      m_Calls:
-      - m_Target: {fileID: 1566499337}
-        m_TargetAssemblyTypeName: VRConnectionManager, Assembly-CSharp
-        m_MethodName: JoinSharedWorld
-        m_Mode: 1
-        m_Arguments:
-          m_ObjectArgument: {fileID: 0}
-          m_ObjectArgumentAssemblyTypeName: UnityEngine.Object, UnityEngine
-          m_IntArgument: 0
-          m_FloatArgument: 0
-          m_StringArgument: 
-          m_BoolArgument: 0
-        m_CallState: 2
+      m_Calls: []
   m_Deactivated:
     m_PersistentCalls:
       m_Calls: []
@@ -743,7 +731,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 618f39c469c7e49809b8c57c39dc2e45, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::VRConnectionManager
-  nomDeLaSessionAR: Session_RVRA
 --- !u!1001 &1995412629
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -804,10 +791,6 @@ PrefabInstance:
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
       objectReference: {fileID: 0}
-    - target: {fileID: 9189073617497713798, guid: 917aed02d317a409aa69d0201d4755a5, type: 3}
-      propertyPath: ConnectionData.ServerListenAddress
-      value: 0.0.0.0
-      objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
@@ -822,5 +805,5 @@ SceneRoots:
   - {fileID: 1566499335}
   - {fileID: 1995412629}
   - {fileID: 781861646}
-  - {fileID: 1213290050}
   - {fileID: 1429090509}
+  - {fileID: 1213290050}

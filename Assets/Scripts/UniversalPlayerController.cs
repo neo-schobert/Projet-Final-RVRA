@@ -3,34 +3,46 @@ using Unity.Netcode;
 
 public class UniversalPlayerController : NetworkBehaviour
 {
+    private Transform cameraTransform;
+
     public override void OnNetworkSpawn()
     {
-        // On vérifie si ce personnage appartient à l'appareil local (le tien)
         if (HasAuthority)
         {
-            AttacherALaCamera();
+            TrouverCamera();
+            
+            // On cache la sphère pour nous-mêmes (pour ne pas avoir la tête dedans)
+            // Mais les autres joueurs la verront !
+            MeshRenderer renderer = GetComponentInChildren<MeshRenderer>();
+            if (renderer != null)
+            {
+                renderer.enabled = false;
+            }
         }
     }
 
-    private void AttacherALaCamera()
+    private void TrouverCamera()
     {
-        // On cherche la caméra active de la scène (casque VR ou téléphone AR)
         Camera cameraActive = Camera.main;
-
         if (cameraActive != null)
         {
-            // On devient l'enfant de la caméra pour copier tous ses mouvements automatiquement !
-            transform.SetParent(cameraActive.transform);
-            
-            // On se centre parfaitement sur la caméra
-            transform.localPosition = Vector3.zero;
-            transform.localRotation = Quaternion.identity;
-
-            Debug.Log("Succès : Le joueur réseau s'est attaché à la caméra !");
+            cameraTransform = cameraActive.transform;
+            Debug.Log("Succès : Caméra trouvée pour le joueur réseau !");
         }
         else
         {
             Debug.LogError("Erreur : Aucune caméra avec le tag 'MainCamera' n'a été trouvée !");
+        }
+    }
+
+    void Update()
+    {
+        // Si on a l'autorité et qu'on a trouvé la caméra, on la suit à chaque frame
+        if (HasAuthority && cameraTransform != null)
+        {
+            // On copie la position et la rotation de la caméra du casque/téléphone
+            transform.position = cameraTransform.position;
+            transform.rotation = cameraTransform.rotation;
         }
     }
 }

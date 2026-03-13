@@ -146,9 +146,6 @@ PlayerSettings:
   bundleVersion: 0.1.0
   preloadedAssets:
   - {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
-  - {fileID: 9093886339215654634, guid: b2eb46444da2a44f1a7e1059ccc55125, type: 2}
-  - {fileID: 11400000, guid: 2bf4e3025355b4f3c86bd01fd09bc820, type: 2}
-  - {fileID: 11400000, guid: 4e06c9019ac7c4ff2abfae2ee16a4564, type: 2}
   metroInputSource: 0
   wsaTransparentSwapchain: 0
   m_HolographicPauseOnTrackingLoss: 1
@@ -944,11 +941,11 @@ PlayerSettings:
   captureStartupLogs: {}
   activeInputHandler: 1
   windowsGamepadBackendHint: 0
-  cloudProjectId: f1d486d0-ceb9-48b8-a958-5dc207cb1d36
+  cloudProjectId: 0c93019a-f5ee-4404-9aaa-d7aa116b9feb
   framebufferDepthMemorylessMode: 0
   qualitySettingsNames: []
-  projectName: Escape The Island
-  organizationId: fgbh6ht99h
+  projectName: Project Final
+  organizationId: meckitue
   cloudEnabled: 0
   legacyClampBlendShapeWeights: 0
   hmiLoadingImage: {fileID: 0}

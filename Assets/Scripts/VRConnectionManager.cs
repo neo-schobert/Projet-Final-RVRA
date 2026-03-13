@@ -7,8 +7,8 @@ using System.Threading.Tasks;
 public class VRConnectionManager : MonoBehaviour
 {
     // C'est ici que tu définis le nom exact que le casque doit chercher
-    public string nomDeLaSessionAR = "Session_RVRA"; 
-    
+    public string nomDeLaSessionAR = "Session_RVRA";
+
     private bool isConnecting = false;
 
     async void Start()

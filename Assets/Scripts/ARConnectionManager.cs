@@ -1,5 +1,4 @@
 using UnityEngine;
-using Unity.Netcode;
 using Unity.Services.Core;
 using Unity.Services.Authentication;
 using Unity.Services.Multiplayer;
@@ -16,29 +15,29 @@ public class ARConnectionManager : MonoBehaviour
     {
         try
         {
-            // 1. Initialiser les services Cloud d'Unity
             await UnityServices.InitializeAsync();
 
-            // 2. Se connecter de manière anonyme
             if (!AuthenticationService.Instance.IsSignedIn)
             {
                 await AuthenticationService.Instance.SignInAnonymouslyAsync();
             }
 
-            // 3. Créer la session pour l'Autorité Distribuée
             var options = new SessionOptions()
             {
                 MaxPlayers = 4,
-                Name = "Session_RVRA" // Un nom unique pour la retrouver
+                Name = "Session_RVRA"
             };
             options.WithDistributedAuthorityNetwork();
 
             await MultiplayerService.Instance.CreateSessionAsync(options);
-            Debug.Log("Session AR (Autorité Distribuée) créée avec succès sur les serveurs d'Unity !");
+            Debug.Log("[ARConnectionManager] Session AR créée. En attente du joueur VR...");
+
+            // Cas 2 : LSJ est déjà la scène active (AR démarre directement dedans).
+            // XRPlatformSetup dans LSJ a déjà activé le rig AR au démarrage.
         }
         catch (System.Exception e)
         {
-            Debug.LogError($"Erreur lors de la création de la session AR : {e.Message}");
+            Debug.LogError($"[ARConnectionManager] Erreur : {e.Message}");
         }
     }
 }

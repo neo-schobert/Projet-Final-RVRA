@@ -1,3 +1,4 @@
+using System.Collections;
 using UnityEngine;
 using UnityEngine.XR.ARFoundation;
 using UnityEngine.XR.ARSubsystems;
@@ -31,17 +32,21 @@ public class ARCalibration : MonoBehaviour
     [Tooltip("Un texte/UI qui indique 'Calibré !' → apparaît après calibration")]
     [SerializeField] private GameObject _calibratedUI;
 
+    [Tooltip("Durée d'affichage du message 'Calibré !' en secondes")]
+    [SerializeField] private float _calibratedDisplayDuration = 10f;
+
     /// <summary>True une fois que le marqueur a été détecté et la calibration effectuée.</summary>
     public static bool IsCalibrated { get; private set; }
 
     private void OnEnable()
     {
-        _trackedImageManager.trackedImagesChanged += OnTrackedImagesChanged;
+        // AR Foundation 6.0+ : trackablesChanged est un UnityEvent → AddListener
+        _trackedImageManager.trackablesChanged.AddListener(OnTrackablesChanged);
     }
 
     private void OnDisable()
     {
-        _trackedImageManager.trackedImagesChanged -= OnTrackedImagesChanged;
+        _trackedImageManager.trackablesChanged.RemoveListener(OnTrackablesChanged);
     }
 
     private void Start()
@@ -51,7 +56,7 @@ public class ARCalibration : MonoBehaviour
         _calibratedUI?.SetActive(false);
     }
 
-    private void OnTrackedImagesChanged(ARTrackedImagesChangedEventArgs args)
+    private void OnTrackablesChanged(ARTrackablesChangedEventArgs<ARTrackedImage> args)
     {
         if (IsCalibrated) return;
 
@@ -59,7 +64,7 @@ public class ARCalibration : MonoBehaviour
         foreach (var image in args.added)
             TryCalibrate(image);
 
-        // Et sur les images déjà suivies (au cas où elle bougent légèrement au début)
+        // Et sur les images déjà suivies (au cas où elles bougent légèrement au début)
         foreach (var image in args.updated)
             if (image.trackingState == TrackingState.Tracking)
                 TryCalibrate(image);
@@ -85,7 +90,16 @@ public class ARCalibration : MonoBehaviour
         _searchingUI?.SetActive(false);
         _calibratedUI?.SetActive(true);
 
+        // Le message disparaît après N secondes
+        StartCoroutine(HideCalibratedUIAfterDelay());
+
         Debug.Log($"[ARCalibration] ✓ Calibré ! Marqueur '{image.referenceImage.name}' → (0,0,0)");
         Debug.Log($"[ARCalibration] AR Origin → position:{_arSessionOrigin.position} rotation:{_arSessionOrigin.eulerAngles}");
+    }
+
+    private IEnumerator HideCalibratedUIAfterDelay()
+    {
+        yield return new WaitForSeconds(_calibratedDisplayDuration);
+        _calibratedUI?.SetActive(false);
     }
 }

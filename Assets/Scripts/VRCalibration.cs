@@ -1,19 +1,7 @@
+using System.Collections;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
-/// <summary>
-/// Calibration VR côté casque.
-///
-/// Le joueur VR se place physiquement sur le marqueur imprimé et appuie sur A.
-///   1. Le XR Origin est déplacé pour que la position XZ de la tête = (0, ?, 0)
-///   2. Le XR Origin est roté pour que la direction de regard = la même que le marqueur AR
-///
-/// Résultat : le casque et le téléphone partagent le même (0,0,0) physique.
-///
-/// Setup :
-///   - Placer ce script sur un GameObject vide dans la scène (ex: "Calibration Manager")
-///   - Assigner le XR Origin (XR Rig) et l'action de calibration (bouton A)
-/// </summary>
 public class VRCalibration : MonoBehaviour
 {
     [Header("VR")]
@@ -21,17 +9,19 @@ public class VRCalibration : MonoBehaviour
     [SerializeField] private Transform _xrOrigin;
 
     [Header("Input — bouton pour déclencher la calibration")]
-    [Tooltip("Action Input System : ex. XRI RightHand/primaryButton (bouton A Oculus)")]
+    [Tooltip("Action Input System : ex. XRI LeftHand/activate (trigger gauche)")]
     [SerializeField] private InputActionReference _calibrateAction;
 
-    [Header("Feedback visuel (optionnel)")]
-    [Tooltip("Instructions visibles dans le casque : 'Place-toi sur le marqueur et appuie sur A'")]
+    [Header("Feedback visuel")]
+    [Tooltip("Instructions : 'Place-toi sur le marqueur et appuie sur le trigger'")]
     [SerializeField] private GameObject _instructionsUI;
 
-    [Tooltip("Confirmation visible dans le casque : 'Calibré !'")]
+    [Tooltip("Confirmation : 'Calibration réussie !' — disparaît après 5 secondes")]
     [SerializeField] private GameObject _calibratedUI;
 
-    /// <summary>True une fois que le joueur a calibré.</summary>
+    [Tooltip("Durée d'affichage du message de confirmation (secondes)")]
+    [SerializeField] private float _calibratedDisplayDuration = 5f;
+
     public static bool IsCalibrated { get; private set; }
 
     private void OnEnable()
@@ -49,55 +39,75 @@ public class VRCalibration : MonoBehaviour
     private void Start()
     {
         IsCalibrated = false;
+        _calibrateAction?.action.Enable();
+
         _instructionsUI?.SetActive(true);
         _calibratedUI?.SetActive(false);
 
-        // Active l'action au cas où elle ne serait pas activée
-        _calibrateAction?.action.Enable();
+        Debug.Log("[VRCalibration] Prêt. En attente du déclenchement...");
     }
 
     private void OnCalibratePressed(InputAction.CallbackContext ctx)
     {
         if (IsCalibrated) return;
+        Debug.Log("[VRCalibration] Bouton reçu → calibration...");
         Calibrate();
     }
 
     private void Calibrate()
     {
+        // ── Trouver la caméra ───────────────────────────────────────────────────
         Camera headCam = Camera.main;
+
+        // Fallback : cherche par tag si Camera.main est null
         if (headCam == null)
         {
-            Debug.LogError("[VRCalibration] Camera.main introuvable !");
+            var camObj = GameObject.FindWithTag("MainCamera");
+            if (camObj != null) headCam = camObj.GetComponent<Camera>();
+        }
+
+        if (headCam == null)
+        {
+            Debug.LogError("[VRCalibration] Aucune camera MainCamera trouvée !");
             return;
         }
 
+        Debug.Log($"[VRCalibration] Caméra trouvée : {headCam.name}");
+
         // ── Étape 1 : Aligner la position XZ ───────────────────────────────────
-        // La tête est au-dessus du marqueur → on aligne uniquement X et Z
-        // (on ignore Y pour ne pas modifier la hauteur du rig)
         float headX = headCam.transform.position.x;
         float headZ = headCam.transform.position.z;
-
         _xrOrigin.position -= new Vector3(headX, 0f, headZ);
 
-        // ── Étape 2 : Aligner le yaw (optionnel mais recommandé) ───────────────
-        // Le joueur DOIT se tenir face à la même direction que le marqueur AR.
-        // On annule le yaw actuel de la tête pour aligner les repères.
+        // ── Étape 2 : Aligner le yaw ────────────────────────────────────────────
         float headYaw = headCam.transform.eulerAngles.y;
         _xrOrigin.Rotate(0f, -headYaw, 0f, Space.World);
 
-        // ── Terminé ────────────────────────────────────────────────────────────
+        // ── Terminé ─────────────────────────────────────────────────────────────
         IsCalibrated = true;
+
+        Debug.Log($"[VRCalibration] _instructionsUI = {(_instructionsUI != null ? _instructionsUI.name : "NULL")}");
+        Debug.Log($"[VRCalibration] _calibratedUI   = {(_calibratedUI != null ? _calibratedUI.name : "NULL")}");
 
         _instructionsUI?.SetActive(false);
         _calibratedUI?.SetActive(true);
 
-        Debug.Log($"[VRCalibration] ✓ Calibré ! XR Origin → position:{_xrOrigin.position} rotation:{_xrOrigin.eulerAngles}");
+        Debug.Log($"[VRCalibration] Instructions actif : {_instructionsUI?.activeSelf}");
+        Debug.Log($"[VRCalibration] Calibré actif     : {_calibratedUI?.activeSelf}");
+
+        // Le message disparaît après N secondes
+        StartCoroutine(HideCalibratedUIAfterDelay());
+
+        Debug.Log($"[VRCalibration] ✓ Calibré ! Origin → pos:{_xrOrigin.position} rot:{_xrOrigin.eulerAngles}");
     }
 
-    /// <summary>
-    /// Alternative : appeler depuis un XR Interactable (bouton physique dans la scène)
-    /// au lieu de l'Input System.
-    /// </summary>
+    private IEnumerator HideCalibratedUIAfterDelay()
+    {
+        yield return new WaitForSeconds(_calibratedDisplayDuration);
+        _calibratedUI?.SetActive(false);
+    }
+
+    /// <summary>Appeler depuis un XR Interactable si besoin.</summary>
     public void CalibrateFromButton()
     {
         if (IsCalibrated) return;

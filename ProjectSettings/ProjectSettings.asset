@@ -146,6 +146,9 @@ PlayerSettings:
   bundleVersion: 0.1.0
   preloadedAssets:
   - {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
+  - {fileID: 9093886339215654634, guid: b2eb46444da2a44f1a7e1059ccc55125, type: 2}
+  - {fileID: 11400000, guid: 2bf4e3025355b4f3c86bd01fd09bc820, type: 2}
+  - {fileID: 11400000, guid: 4e06c9019ac7c4ff2abfae2ee16a4564, type: 2}
   metroInputSource: 0
   wsaTransparentSwapchain: 0
   m_HolographicPauseOnTrackingLoss: 1
@@ -167,7 +170,7 @@ PlayerSettings:
   androidMaxAspectRatio: 2.4
   androidMinAspectRatio: 1
   applicationIdentifier:
-    Android: com.UnityTechnologies.com.unity.template.urpblank
+    Android: com.neo.projetrvra
     Standalone: com.Unity-Technologies.com.unity.template.urp-blank
     iPhone: com.Unity-Technologies.com.unity.template.urp-blank
   buildNumber:
@@ -543,7 +546,7 @@ PlayerSettings:
     m_APIs: 10000000
     m_Automatic: 1
   - m_BuildTarget: AndroidPlayer
-    m_APIs: 150000000b000000
+    m_APIs: 0b000000
     m_Automatic: 0
   - m_BuildTarget: WindowsStandaloneSupport
     m_APIs: 02000000
@@ -941,10 +944,10 @@ PlayerSettings:
   captureStartupLogs: {}
   activeInputHandler: 1
   windowsGamepadBackendHint: 0
-  cloudProjectId: 0c93019a-f5ee-4404-9aaa-d7aa116b9feb
+  cloudProjectId: 58b52205-dd7f-4999-bb9f-3c1233ff0394
   framebufferDepthMemorylessMode: 0
   qualitySettingsNames: []
-  projectName: Project Final
+  projectName: Projet-Final-RVRA
   organizationId: meckitue
   cloudEnabled: 0
   legacyClampBlendShapeWeights: 0

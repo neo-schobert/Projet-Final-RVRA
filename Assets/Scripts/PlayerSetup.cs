@@ -4,35 +4,52 @@ using UnityEngine;
 /// <summary>
 /// À mettre sur les prefabs PlayerVR et PlayerAR.
 ///
-/// Quand c'est TON joueur local (HasAuthority) :
-///   → S'attache à Camera.main pour suivre ta tête automatiquement.
+/// Joueur local (HasAuthority) :
+///   → Suit Camera.main dans Update() chaque frame.
+///   → ClientNetworkTransform envoie cette position aux autres clients.
 ///
-/// Quand c'est un joueur distant :
-///   → Ne fait rien (le NetworkTransform sync la position depuis le réseau).
+/// Joueur distant :
+///   → ClientNetworkTransform applique la position reçue du réseau.
+///
+/// IMPORTANT : ne pas utiliser SetParent(camera) car ClientNetworkTransform
+/// et le parenting se battent → corps figé. On utilise Update() à la place.
 /// </summary>
 [RequireComponent(typeof(NetworkObject))]
 public class PlayerSetup : NetworkBehaviour
 {
+    private Camera _cam;
+
     public override void OnNetworkSpawn()
     {
-        if (!HasAuthority) return;
+        // IsOwner fonctionne en mode Relay (hôte/client) ET en mode DA
+        if (!IsOwner) return;
 
-        // Camera.main pointe vers la caméra active :
-        //   - VR : la caméra dans le XR Origin activé par XRRigSwitcher
-        //   - AR : la caméra dans l'AR Session Origin activé par XRRigSwitcher
-        Camera cam = Camera.main;
+        _cam = Camera.main;
 
-        if (cam == null)
+        if (_cam == null)
         {
-            Debug.LogError("[PlayerSetup] Camera.main introuvable ! Vérifie que le bon rig XR est activé.");
+            Debug.LogError("[PlayerSetup] Camera.main introuvable ! Vérifie le tag MainCamera sur ta caméra active.");
             return;
         }
 
-        // On devient enfant de la caméra → on suit tous ses mouvements (tête, rotation, etc.)
-        transform.SetParent(cam.transform);
-        transform.localPosition = Vector3.zero;
-        transform.localRotation = Quaternion.identity;
+        // Position initiale = position actuelle de la caméra
+        transform.position = _cam.transform.position;
+        transform.rotation = Quaternion.Euler(0f, _cam.transform.eulerAngles.y, 0f);
 
-        Debug.Log($"[PlayerSetup] Joueur local attaché à la caméra : {cam.name}");
+        Debug.Log($"[PlayerSetup] Joueur local prêt → suivi de : {_cam.name}");
+    }
+
+    private void Update()
+    {
+        // Seulement pour le joueur local (celui dont on est propriétaire)
+        if (!IsOwner || _cam == null) return;
+
+        // Suit la position de la tête (camera) exactement
+        transform.position = _cam.transform.position;
+
+        // Pour le corps : seulement le yaw (rotation horizontale)
+        // Le pitch (haut/bas) et le roll ne s'appliquent pas à un corps debout
+        float yaw = _cam.transform.eulerAngles.y;
+        transform.rotation = Quaternion.Euler(0f, yaw, 0f);
     }
 }

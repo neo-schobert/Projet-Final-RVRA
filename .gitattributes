@@ -1,0 +1,12 @@
+*.blend filter=lfs diff=lfs merge=lfs -text
+*.fbx filter=lfs diff=lfs merge=lfs -text
+*.dae filter=lfs diff=lfs merge=lfs -text
+Assets/LSJ/Grass/Flowers.fbx filter=lfs diff=lfs merge=lfs -text
+Assets/LSJ/Grass/Grass.fbx filter=lfs diff=lfs merge=lfs -text
+Assets/LSJ/Palm-2/Palm_2.fbx filter=lfs diff=lfs merge=lfs -text
+Assets/LSJ/Rocks.fbx filter=lfs diff=lfs merge=lfs -text
+Assets/LSJ/jetski/yacht.fbx filter=lfs diff=lfs merge=lfs -text
+Assets/Player/player.fbx filter=lfs diff=lfs merge=lfs -text
+Assets/Player/player[[:space:]]hidden.fbx filter=lfs diff=lfs merge=lfs -text
+Assets/Player/player[[:space:]]1.fbx filter=lfs diff=lfs merge=lfs -text
+Assets/temple/brutalist-church.fbx filter=lfs diff=lfs merge=lfs -text

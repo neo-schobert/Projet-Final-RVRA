@@ -5,15 +5,12 @@ EditorBuildSettings:
   m_ObjectHideFlags: 0
   serializedVersion: 2
   m_Scenes:
-  - enabled: 0
-    path: Assets/Scenes/VRLobby.unity
-    guid: 6e8c2a0c359d2416181a660edd81bc8d
-  - enabled: 0
-    path: Assets/Scenes/LSJ.unity
-    guid: cd1f3f15347e24ad5b83827c622adb6e
   - enabled: 1
     path: Assets/Scenes/Scene.unity
     guid: 6bb3fc95b23052d4f901b92ec37300e5
+  - enabled: 1
+    path: Assets/Scenes/TempleScene.unity
+    guid: e97047adfb133a0409fc7e339ce25fb0
   m_configObjects:
     Unity.XR.Oculus.Settings: {fileID: 11400000, guid: 2bf4e3025355b4f3c86bd01fd09bc820, type: 2}
     UnityEditor.XR.ARCore.ARCoreSettings: {fileID: 11400000, guid: 3131c34946d10fa4fb2c35df1a52cc87, type: 2}

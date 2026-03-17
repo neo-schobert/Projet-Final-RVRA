@@ -127,6 +127,10 @@ PrefabInstance:
     serializedVersion: 3
     m_TransformParent: {fileID: 0}
     m_Modifications:
+    - target: {fileID: 921477037485874954, guid: 5476dad7c206b422d838c6f4b4a2d619, type: 3}
+      propertyPath: depthTextureModeOn
+      value: 0
+      objectReference: {fileID: 0}
     - target: {fileID: 5880158180785789031, guid: 5476dad7c206b422d838c6f4b4a2d619, type: 3}
       propertyPath: m_Name
       value: little_st_james_terrain

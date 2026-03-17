@@ -1,5 +1,4 @@
 using Unity.Netcode;
-using Unity.XR.CoreUtils;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.SceneManagement;
@@ -11,6 +10,11 @@ using UnityEngine.SceneManagement;
 /// FONCTIONNE EN SOLO ET EN MULTIJOUEUR :
 ///   • Solo (pas de session Netcode) → transition directe via SceneManager Unity standard.
 ///   • Multijoueur (session Netcode active) → RPC broadcast, session owner charge la scène.
+///
+/// NOTE CALIBRATION :
+///   L'offset de calibration est sauvegardé dans CalibrationPersistence lors du calibrage
+///   (ARProximityCalibration → CalibrationPersistence.SaveOffset).
+///   Aucune sauvegarde supplémentaire n'est nécessaire ici à la transition.
 ///
 /// CORRECTIFS :
 ///   A. Distance XZ seulement (cylindre, pas sphère) :
@@ -123,29 +127,29 @@ public class SceneTriggerVR : NetworkBehaviour
         if (sessionActive)
         {
             // Multijoueur : on diffuse à tous via RPC.
-            // Chaque client sauvegarde sa calibration ; le session owner charge la scène.
+            // L'offset de calibration est déjà dans CalibrationPersistence (DontDestroyOnLoad).
             Debug.Log("[SceneTriggerVR] Session Netcode détectée → chemin multijoueur (RPC).");
             DemanderTransitionRpc();
         }
         else
         {
             // Solo : pas de session (ou session non encore synchronisée).
-            // On sauvegarde localement et on charge directement avec SceneManager Unity.
             Debug.Log("[SceneTriggerVR] Pas de session Netcode → chemin solo (SceneManager direct).");
-            SauvegarderCalibrationLocale();
             SceneManager.LoadScene(_targetSceneName);
         }
     }
 
     // ── RPC broadcast (multijoueur DA) ────────────────────────────────────────
 
+    /// <summary>
+    /// Diffuse la demande de transition à tous les clients.
+    /// Seul le session owner (clientId 0) appelle LoadScene.
+    /// L'offset de calibration est conservé dans CalibrationPersistence sur chaque client.
+    /// </summary>
     [Rpc(SendTo.Everyone)]
     private void DemanderTransitionRpc()
     {
-        Debug.Log("[SceneTriggerVR] RPC reçu — sauvegarde calibration locale...");
-
-        // Chaque client sauvegarde son propre XR Origin
-        SauvegarderCalibrationLocale();
+        Debug.Log("[SceneTriggerVR] RPC reçu — transition vers TempleScene...");
 
         // Seul le session owner (clientId 0) appelle LoadScene en DA
         if (NetworkManager.Singleton.LocalClientId == NetworkManager.ServerClientId)
@@ -153,31 +157,6 @@ public class SceneTriggerVR : NetworkBehaviour
             Debug.Log($"[SceneTriggerVR] Session owner → LoadScene(\"{_targetSceneName}\")");
             NetworkManager.Singleton.SceneManager.LoadScene(_targetSceneName, LoadSceneMode.Single);
         }
-    }
-
-    // ── Helpers ───────────────────────────────────────────────────────────────
-
-    /// <summary>Sauvegarde la calibration du XR Origin actif (VR ou AR).</summary>
-    private static void SauvegarderCalibrationLocale()
-    {
-        Transform origin = TrouverXROriginActif();
-        if (origin == null) return;
-
-        if (XRRigSwitcher.IsVRMode)
-            CalibrationPersistence.SaveVR(origin);
-        else
-            CalibrationPersistence.SaveAR(origin);
-    }
-
-    /// <summary>Renvoie le Transform du XROrigin actif (ignore les rigs désactivés).</summary>
-    private static Transform TrouverXROriginActif()
-    {
-        XROrigin origin = FindAnyObjectByType<XROrigin>();
-        if (origin != null) return origin.transform;
-
-        Debug.LogWarning("[SceneTriggerVR] FindAnyObjectByType<XROrigin>() : aucun résultat. " +
-                         "Vérifie que le XR Origin actif est bien dans la scène.");
-        return null;
     }
 
     // ── Gizmos éditeur ────────────────────────────────────────────────────────

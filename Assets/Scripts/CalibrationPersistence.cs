@@ -1,26 +1,83 @@
 using UnityEngine;
 
 /// <summary>
-/// Singleton DontDestroyOnLoad — mémorise les offsets de calibration
-/// (position/rotation des XR Origins) pour les réappliquer dans TempleScene.
+/// Singleton DontDestroyOnLoad — mémorise l'offset physique VR→AR capturé lors
+/// du calibrage et fournit les positions/rotations de spawn dans TempleScene.
 ///
 /// SETUP :
-///   Placer ce script sur un GameObject vide dans Scene.unity (ex: "CalibrationPersistence").
+///   Ce script est déjà placé sur "CalibrationPersistence" dans Scene.unity.
 ///   Il survivra automatiquement à la transition de scène.
+///
+/// FLUX :
+///   1. ARProximityCalibration.SaveOffset(arPos, vrPos) lors du calibrage.
+///   2. SceneTriggerVR déclenche la transition — aucune sauvegarde supplémentaire
+///      nécessaire, l'offset est déjà mémorisé.
+///   3. TempleSceneManager lit VRSpawnPosition/Rotation et ARSpawnPosition/Rotation au Start().
+///
+/// LOGIQUE DE SPAWN dans TempleScene :
+///   • AR spawn à (0, 0, 0)  — c'est l'ancre de référence.
+///   • VR spawn à (SpawnDistance, 0, 0) en regardant vers (0, 0, 0).
+///   SpawnDistance = magnitude XZ de l'offset physique VR−AR capturé au calibrage.
 /// </summary>
 public class CalibrationPersistence : MonoBehaviour
 {
     public static CalibrationPersistence Instance { get; private set; }
 
-    // ── Calibration VR (XR Origin VR) ──────────────────────────────────────
-    public static Vector3    VROriginPosition { get; private set; }
-    public static Quaternion VROriginRotation { get; private set; }
-    public static bool       HasVRData        { get; private set; }
+    // ── Données de calibration ─────────────────────────────────────────────
+    /// <summary>
+    /// Offset physique = vrCamera.position - arCamera.position au moment du calibrage.
+    /// Représente la distance et direction du VR par rapport à l'AR dans l'espace réel.
+    /// </summary>
+    public static Vector3 PhysicalOffset { get; private set; }
 
-    // ── Calibration AR (XR Origin Mobile AR) ───────────────────────────────
-    public static Vector3    AROriginPosition { get; private set; }
-    public static Quaternion AROriginRotation { get; private set; }
-    public static bool       HasARData        { get; private set; }
+    /// <summary>True après un appel à SaveOffset réussi.</summary>
+    public static bool HasData { get; private set; }
+
+    // ── Données dérivées pour TempleScene ──────────────────────────────────
+    /// <summary>
+    /// Distance de spawn = magnitude XZ de l'offset physique.
+    /// Formule : sqrt(offset.x² + offset.z²)
+    /// </summary>
+    public static float SpawnDistance =>
+        Mathf.Sqrt(PhysicalOffset.x * PhysicalOffset.x +
+                   PhysicalOffset.z * PhysicalOffset.z);
+
+    // ── Spawn VR ───────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Position de spawn du XR Origin VR dans TempleScene :
+    /// VR spawn sur l'axe X positif à la distance SpawnDistance.
+    /// </summary>
+    public static Vector3 VRSpawnPosition => new Vector3(SpawnDistance, 0f, 0f);
+
+    /// <summary>
+    /// Rotation de spawn du XR Origin VR dans TempleScene :
+    /// VR regarde vers Vector3.zero (vers le joueur AR).
+    /// </summary>
+    public static Quaternion VRSpawnRotation
+    {
+        get
+        {
+            // Direction de (SpawnDistance, 0, 0) vers (0, 0, 0)
+            Vector3 forward = (Vector3.zero - VRSpawnPosition).normalized;
+            // forward = (-1, 0, 0) quand SpawnDistance > 0
+            // Cas dégénéré (offset nul) : regarder en avant par défaut
+            if (forward == Vector3.zero) forward = Vector3.forward;
+            return Quaternion.LookRotation(forward, Vector3.up);
+        }
+    }
+
+    // ── Spawn AR ───────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Position de spawn du XR Origin AR dans TempleScene : l'AR est l'ancre à (0, 0, 0).
+    /// </summary>
+    public static Vector3 ARSpawnPosition => Vector3.zero;
+
+    /// <summary>
+    /// Rotation de spawn du XR Origin AR dans TempleScene : rotation identité.
+    /// </summary>
+    public static Quaternion ARSpawnRotation => Quaternion.identity;
 
     // ───────────────────────────────────────────────────────────────────────
 
@@ -36,53 +93,23 @@ public class CalibrationPersistence : MonoBehaviour
         Debug.Log("[CalibrationPersistence] Singleton prêt — survivra à la transition de scène.");
     }
 
-    // ── Sauvegarde ──────────────────────────────────────────────────────────
+    // ── API publique ────────────────────────────────────────────────────────
 
-    /// <summary>Appelé par SceneTriggerVR (côté VR) avant la transition.</summary>
-    public static void SaveVR(Transform xrOrigin)
+    /// <summary>
+    /// Sauvegarde l'offset physique entre les deux joueurs au moment du calibrage.
+    /// Appelé par ARProximityCalibration juste avant l'alignement du XR Origin AR.
+    /// </summary>
+    /// <param name="arPhysicalPosition">Camera.main.position côté AR au moment du calibrage.</param>
+    /// <param name="vrPhysicalPosition">PlayerSetup.transform.position côté VR au moment du calibrage.</param>
+    public static void SaveOffset(Vector3 arPhysicalPosition, Vector3 vrPhysicalPosition)
     {
-        if (xrOrigin == null) { Debug.LogWarning("[CalibrationPersistence] SaveVR : xrOrigin null !"); return; }
-        VROriginPosition = xrOrigin.position;
-        VROriginRotation = xrOrigin.rotation;
-        HasVRData        = true;
-        Debug.Log($"[CalibrationPersistence] VR sauvegardé → pos:{VROriginPosition}  rot:{VROriginRotation.eulerAngles}");
-    }
+        PhysicalOffset = vrPhysicalPosition - arPhysicalPosition;
+        HasData        = true;
 
-    /// <summary>Appelé par SceneTriggerVR (côté AR) avant la transition.</summary>
-    public static void SaveAR(Transform xrOrigin)
-    {
-        if (xrOrigin == null) { Debug.LogWarning("[CalibrationPersistence] SaveAR : xrOrigin null !"); return; }
-        AROriginPosition = xrOrigin.position;
-        AROriginRotation = xrOrigin.rotation;
-        HasARData        = true;
-        Debug.Log($"[CalibrationPersistence] AR sauvegardé → pos:{AROriginPosition}  rot:{AROriginRotation.eulerAngles}");
-    }
-
-    // ── Application ─────────────────────────────────────────────────────────
-
-    /// <summary>Applique la calibration VR sauvegardée au XR Origin de TempleScene.</summary>
-    public static void ApplyVR(Transform xrOriginTarget)
-    {
-        if (!HasVRData)
-        {
-            Debug.LogWarning("[CalibrationPersistence] ApplyVR : aucune donnée VR sauvegardée. Calibration non effectuée ?");
-            return;
-        }
-        xrOriginTarget.position = VROriginPosition;
-        xrOriginTarget.rotation = VROriginRotation;
-        Debug.Log("[CalibrationPersistence] ✓ Calibration VR appliquée à TempleScene.");
-    }
-
-    /// <summary>Applique la calibration AR sauvegardée au XR Origin de TempleScene.</summary>
-    public static void ApplyAR(Transform xrOriginTarget)
-    {
-        if (!HasARData)
-        {
-            Debug.LogWarning("[CalibrationPersistence] ApplyAR : aucune donnée AR sauvegardée. Calibration non effectuée ?");
-            return;
-        }
-        xrOriginTarget.position = AROriginPosition;
-        xrOriginTarget.rotation = AROriginRotation;
-        Debug.Log("[CalibrationPersistence] ✓ Calibration AR appliquée à TempleScene.");
+        Debug.Log($"[CalibrationPersistence] ✓ Offset sauvegardé → " +
+                  $"offset={PhysicalOffset:F3} | " +
+                  $"SpawnDistance={SpawnDistance:F3}m | " +
+                  $"VR spawn={VRSpawnPosition:F3} rot={VRSpawnRotation.eulerAngles:F1} | " +
+                  $"AR spawn={ARSpawnPosition:F3}");
     }
 }

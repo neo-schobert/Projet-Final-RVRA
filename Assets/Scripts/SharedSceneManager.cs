@@ -5,6 +5,7 @@ using Unity.Services.Authentication;
 using Unity.Services.Multiplayer;
 using System.Threading.Tasks;
 using System;
+using UnityEngine.SceneManagement;
 
 /// <summary>
 /// Scène partagée AR + VR — topologie Distributed Authority (DA).
@@ -45,6 +46,11 @@ public class SharedSceneManager : MonoBehaviour
 
     private ISession _session;
 
+    // FIX: Nom de la scène de destination — utilisé pour détecter l'arrivée dans TempleScene.
+    [Header("Transition de scène")]
+    [Tooltip("Nom exact de la scène de destination (doit correspondre à Build Settings).")]
+    [SerializeField] private string templeSceneName = "TempleScene";
+
     // ─────────────────────────────────────────────────────────────────────────
 
     private void Start()
@@ -54,6 +60,12 @@ public class SharedSceneManager : MonoBehaviour
         else
             Debug.LogError("[SharedSceneManager] NetworkManager introuvable dans la scène !");
 
+        // FIX: Abonnement à sceneLoaded pour re-spawner le joueur après transition de scène.
+        // Raison : en mode DA, SceneManager.LoadScene() bypass la migration NGO des NetworkObjects
+        // → VRPlayer (et éventuellement PlayerAR) sont détruits au changement de scène.
+        // SharedSceneManager survit (sur NetworkManager DontDestroyOnLoad) et re-spawne si besoin.
+        SceneManager.sceneLoaded += OnSceneLoaded;
+
         _ = ConnecterAsync();
     }
 
@@ -61,8 +73,58 @@ public class SharedSceneManager : MonoBehaviour
     {
         if (NetworkManager.Singleton != null)
             NetworkManager.Singleton.OnClientConnectedCallback -= OnClientConnected;
+        // FIX: Désabonnement propre.
+        SceneManager.sceneLoaded -= OnSceneLoaded;
         if (_session != null)
             _ = _session.LeaveAsync();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // FIX: RE-SPAWN après transition de scène
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Appelé après chaque chargement de scène (Awake des objets de scène déjà exécutés).
+    /// Si on arrive dans TempleScene et que le joueur local n'a plus de NetworkObject,
+    /// on le re-spawne immédiatement.
+    ///
+    /// Guard : si le joueur a migré via SceneMigrationSynchronization (cas idéal),
+    /// PlayerObject != null → on ne re-spawne pas → pas de doublon.
+    /// </summary>
+    private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+    {
+        // On n'agit que sur la scène de destination
+        if (scene.name != templeSceneName) return;
+
+        // Session et connexion nécessaires
+        if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsConnectedClient)
+        {
+            Debug.LogWarning("[SharedSceneManager] sceneLoaded dans TempleScene mais pas connecté — spawn ignoré.");
+            return;
+        }
+
+        // FIX: Chercher si un NetworkObject joueur local existe déjà dans la scène
+        // (migration réussie via SceneMigrationSynchronization) OU dans DontDestroyOnLoad.
+        // On utilise IsOwner + IsPlayerObject plutôt que LocalClient.PlayerObject
+        // car en DA l'assignation PlayerObject peut être asynchrone.
+        bool joueurExiste = false;
+        foreach (var netObj in FindObjectsByType<NetworkObject>(
+                     FindObjectsInactive.Include, FindObjectsSortMode.None))
+        {
+            if (netObj.IsOwner && netObj.IsPlayerObject)
+            {
+                joueurExiste = true;
+                Debug.Log($"[SharedSceneManager] Joueur local déjà présent dans TempleScene : '{netObj.name}' " +
+                          "(migration réussie — pas de re-spawn).");
+                break;
+            }
+        }
+
+        if (!joueurExiste)
+        {
+            Debug.Log("[SharedSceneManager] Joueur local introuvable dans TempleScene → re-spawn.");
+            SpawnLocalPlayer();
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────

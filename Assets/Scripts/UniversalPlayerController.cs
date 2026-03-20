@@ -26,7 +26,7 @@ public class UniversalPlayerController : NetworkBehaviour
 
         if (_cam != null)
         {
-            transform.position = _cam.transform.position;
+            transform.position = _cam.transform.position - new Vector3(0f, _cam.transform.position.y, 0f);
             transform.rotation = Quaternion.Euler(0f, _cam.transform.eulerAngles.y, 0f);
             Debug.Log($"[UniversalPlayerController] Joueur local prêt → suivi de : {_cam.name}");
         }
@@ -52,13 +52,13 @@ public class UniversalPlayerController : NetworkBehaviour
             if (_cam == null) return; // pas encore disponible, on réessaie à la prochaine frame
 
             // Première fois qu'on trouve la caméra : position initiale
-            transform.position = _cam.transform.position;
+            transform.position = _cam.transform.position - new Vector3(0f, _cam.transform.position.y, 0f);
             transform.rotation = Quaternion.Euler(0f, _cam.transform.eulerAngles.y, 0f);
             Debug.Log($"[UniversalPlayerController] Caméra trouvée en Update() → suivi de : {_cam.name}");
         }
 
         // Suit la position de la tête exactement
-        transform.position = _cam.transform.position;
+        transform.position = _cam.transform.position - new Vector3(0f, _cam.transform.position.y, 0f);
 
         // Seulement le yaw (rotation horizontale) — pas de pitch/roll sur un corps debout
         float yaw = _cam.transform.eulerAngles.y;

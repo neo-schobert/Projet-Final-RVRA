@@ -143,20 +143,14 @@ public class SceneTriggerVR : NetworkBehaviour
 
     /// <summary>
     /// Diffuse la demande de transition à tous les clients.
-    /// Seul le session owner (clientId 0) appelle LoadScene.
-    /// L'offset de calibration est conservé dans CalibrationPersistence sur chaque client.
+    /// Chaque client charge la scène de son côté (SceneManager Unity standard).
+    /// CalibrationPersistence (DontDestroyOnLoad) est déjà présent sur chaque client.
     /// </summary>
     [Rpc(SendTo.Everyone)]
     private void DemanderTransitionRpc()
     {
-        Debug.Log("[SceneTriggerVR] RPC reçu — transition vers TempleScene...");
-
-        // Seul le session owner (clientId 0) appelle LoadScene en DA
-        if (NetworkManager.Singleton.LocalClientId == NetworkManager.ServerClientId)
-        {
-            Debug.Log($"[SceneTriggerVR] Session owner → LoadScene(\"{_targetSceneName}\")");
-            NetworkManager.Singleton.SceneManager.LoadScene(_targetSceneName, LoadSceneMode.Single);
-        }
+        Debug.Log($"[SceneTriggerVR] RPC reçu — LoadScene(\"{_targetSceneName}\")");
+        SceneManager.LoadScene(_targetSceneName);
     }
 
     // ── Gizmos éditeur ────────────────────────────────────────────────────────

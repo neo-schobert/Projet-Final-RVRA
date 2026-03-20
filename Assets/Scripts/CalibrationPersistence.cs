@@ -15,8 +15,8 @@ using UnityEngine;
 ///   3. TempleSceneManager lit VRSpawnPosition/Rotation et ARSpawnPosition/Rotation au Start().
 ///
 /// LOGIQUE DE SPAWN dans TempleScene :
-///   • AR spawn à (0, 0, 0)  — c'est l'ancre de référence.
-///   • VR spawn à (SpawnDistance, 0, 0) en regardant vers (0, 0, 0).
+///   • VR spawn à (0, 0, 0) — c'est l'ancre de référence, regarde vers l'AR.
+///   • AR spawn à (SpawnDistance, 0, 0) en regardant vers (0, 0, 0).
 ///   SpawnDistance = magnitude XZ de l'offset physique VR−AR capturé au calibrage.
 /// </summary>
 public class CalibrationPersistence : MonoBehaviour
@@ -46,38 +46,55 @@ public class CalibrationPersistence : MonoBehaviour
 
     /// <summary>
     /// Position de spawn du XR Origin VR dans TempleScene :
-    /// VR spawn sur l'axe X positif à la distance SpawnDistance.
+    /// VR spawn à l'ancre (0, 0, 0) — point de référence fixe.
     /// </summary>
-    public static Vector3 VRSpawnPosition => new Vector3(SpawnDistance, 0f, 0f);
+    public static Vector3 VRSpawnPosition => Vector3.zero;
 
     /// <summary>
-    /// Rotation de spawn du XR Origin VR dans TempleScene :
-    /// VR regarde vers Vector3.zero (vers le joueur AR).
+    /// Rotation de spawn du XR Origin VR dans TempleScene.
+    /// Aligne l'espace de tracking VR pour que la direction physique VR→AR
+    /// corresponde à la direction virtuelle +X (vers (SpawnDistance, 0, 0)).
     /// </summary>
     public static Quaternion VRSpawnRotation
     {
         get
         {
-            // Direction de (SpawnDistance, 0, 0) vers (0, 0, 0)
-            Vector3 forward = (Vector3.zero - VRSpawnPosition).normalized;
-            // forward = (-1, 0, 0) quand SpawnDistance > 0
-            // Cas dégénéré (offset nul) : regarder en avant par défaut
-            if (forward == Vector3.zero) forward = Vector3.forward;
-            return Quaternion.LookRotation(forward, Vector3.up);
+            // Direction physique du VR vers l'AR (projetée sur XZ)
+            // PhysicalOffset = vrPos - arPos → direction VR→AR = -PhysicalOffset
+            Vector3 physDirVrToAr = new Vector3(-PhysicalOffset.x, 0f, -PhysicalOffset.z);
+            if (physDirVrToAr.sqrMagnitude < 1e-6f) return Quaternion.identity;
+            // Angle à appliquer pour faire correspondre physDirVrToAr → +X virtuel
+            float angle = Vector3.SignedAngle(physDirVrToAr.normalized, Vector3.right, Vector3.up);
+            return Quaternion.AngleAxis(angle, Vector3.up);
         }
     }
 
     // ── Spawn AR ───────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Position de spawn du XR Origin AR dans TempleScene : l'AR est l'ancre à (0, 0, 0).
+    /// Position de spawn du XR Origin AR dans TempleScene :
+    /// AR spawn sur l'axe X positif à la distance SpawnDistance, en face du VR.
     /// </summary>
-    public static Vector3 ARSpawnPosition => Vector3.zero;
+    public static Vector3 ARSpawnPosition => new Vector3(SpawnDistance, 0f, 0f);
 
     /// <summary>
-    /// Rotation de spawn du XR Origin AR dans TempleScene : rotation identité.
+    /// Rotation de spawn du XR Origin AR dans TempleScene.
+    /// Aligne l'espace de tracking AR pour que la direction physique AR→VR
+    /// corresponde à la direction virtuelle -X (vers (0, 0, 0)).
     /// </summary>
-    public static Quaternion ARSpawnRotation => Quaternion.identity;
+    public static Quaternion ARSpawnRotation
+    {
+        get
+        {
+            // Direction physique de l'AR vers le VR (projetée sur XZ)
+            // PhysicalOffset = vrPos - arPos → direction AR→VR = +PhysicalOffset
+            Vector3 physDirArToVr = new Vector3(PhysicalOffset.x, 0f, PhysicalOffset.z);
+            if (physDirArToVr.sqrMagnitude < 1e-6f) return Quaternion.identity;
+            // Angle à appliquer pour faire correspondre physDirArToVr → -X virtuel
+            float angle = Vector3.SignedAngle(physDirArToVr.normalized, -Vector3.right, Vector3.up);
+            return Quaternion.AngleAxis(angle, Vector3.up);
+        }
+    }
 
     // ───────────────────────────────────────────────────────────────────────
 
@@ -111,5 +128,16 @@ public class CalibrationPersistence : MonoBehaviour
                   $"SpawnDistance={SpawnDistance:F3}m | " +
                   $"VR spawn={VRSpawnPosition:F3} rot={VRSpawnRotation.eulerAngles:F1} | " +
                   $"AR spawn={ARSpawnPosition:F3}");
+    }
+
+    /// <summary>
+    /// Met à jour l'offset physique en silence — appelé chaque frame par ARProximityCalibration
+    /// pour tracker la distance réelle VR↔AR pendant toute la session (vue normale ET aérienne).
+    /// Contrairement à SaveOffset, n'émet pas de log pour éviter le flood.
+    /// </summary>
+    public static void UpdateOffset(Vector3 arPhysicalPosition, Vector3 vrPhysicalPosition)
+    {
+        PhysicalOffset = vrPhysicalPosition - arPhysicalPosition;
+        // HasData reste inchangé — UpdateOffset n'est appelé qu'après SaveOffset initial.
     }
 }

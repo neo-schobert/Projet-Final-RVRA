@@ -6,11 +6,11 @@ using UnityEngine;
 ///
 /// Responsabilités (exécutées dans Start, après que XRRigSwitcher ait activé le bon rig) :
 ///   1. Positionne les joueurs dans TempleScene selon la calibration sauvegardée.
-///        • AR : XR Origin positionné pour que Camera.main AR soit à (0, 0, 0).
-///              Formule : XROrigin_AR.position = Vector3.zero - arCamera.localPosition
-///        • VR : XR Origin positionné pour que Camera.main VR soit à (SpawnDistance, 0, 0),
+///        • VR : XR Origin positionné pour que Camera.main VR soit à (0, 0, 0).
+///              Formule : XROrigin_VR.position = Vector3.zero - vrCamera.localPosition
+///        • AR : XR Origin positionné pour que Camera.main AR soit à (SpawnDistance, 0, 0),
 ///              regardant vers (0, 0, 0).
-///              Formule : XROrigin_VR.position = (SpawnDistance, 0, 0) - vrCamera.localPosition
+///              Formule : XROrigin_AR.position = (SpawnDistance, 0, 0) - arCamera.localPosition
 ///              SpawnDistance = magnitude XZ de l'offset physique VR−AR (CalibrationPersistence).
 ///   2. Si VR : désactive tous les LocomotionProviders (Move + Teleport + Turn)
 ///      pour empêcher le joueur VR de se déplacer — le tracking physique reste actif.
@@ -59,9 +59,9 @@ public class TempleSceneManager : MonoBehaviour
     }
 
     /// <summary>
-    /// Positionne le XR Origin VR pour que Camera.main VR soit à (SpawnDistance, ?, 0)
-    /// en XZ, puis oriente le XR Origin VR vers (0, 0, 0).
-    /// Formule : XROrigin_VR.position = (SpawnDistance, 0, 0) - vrCamera.localPosition
+    /// Positionne le XR Origin VR pour que Camera.main VR soit à (0, 0, 0) — ancre de référence.
+    /// Oriente le XR Origin VR vers (SpawnDistance, 0, 0) (vers le joueur AR).
+    /// Formule : XROrigin_VR.position = (0, 0, 0) - vrCamera.localPosition
     /// Si aucune donnée de calibration n'est disponible, le XR Origin VR n'est pas modifié.
     /// </summary>
     private void PositionnerVR()
@@ -81,22 +81,35 @@ public class TempleSceneManager : MonoBehaviour
         }
 
         Camera vrCam = Camera.main;
-        Vector3 camLocalPos = vrCam != null ? vrCam.transform.localPosition : Vector3.zero;
 
-        // Positionne l'origine pour que la caméra VR soit à (SpawnDistance, ?, 0) en XZ
-        vrOrigin.position = CalibrationPersistence.VRSpawnPosition - camLocalPos;
-        // Oriente le XR Origin VR vers l'ancre AR à (0, 0, 0)
+        // Étape 1 — Capturer la position caméra dans l'espace LOCAL du XR Origin AVANT rotation.
+        // camLocalFromOrigin est constant : il représente la structure physique du rig (Camera Offset + tracking).
+        // camWorldPos = origin.rotation * camLocalFromOrigin + origin.position
+        // → pour placer camWorldPos à target après changement de rotation :
+        //   new_origin.pos = target - new_rotation * camLocalFromOrigin
+        Vector3 camLocalFromOrigin = vrOrigin.InverseTransformPoint(
+            vrCam != null ? vrCam.transform.position : vrOrigin.position);
+
+        // Étape 2 — Appliquer la rotation (alignement physique → virtuel).
         vrOrigin.rotation = CalibrationPersistence.VRSpawnRotation;
 
-        Debug.Log($"[TempleSceneManager] ✓ Joueur VR positionné — " +
+        // Étape 3 — Positionner l'origine pour que la caméra VR arrive exactement à VRSpawnPosition.
+        vrOrigin.position = CalibrationPersistence.VRSpawnPosition
+                            - vrOrigin.rotation * camLocalFromOrigin;
+
+        Debug.Log($"[TempleSceneManager] ✓ Joueur VR positionné à (0,0,0) — " +
                   $"XROrigin={vrOrigin.position:F3} " +
                   $"(spawnDist={CalibrationPersistence.SpawnDistance:F3}m) " +
                   $"rot={vrOrigin.rotation.eulerAngles:F1}");
     }
 
     /// <summary>
-    /// Positionne le XR Origin AR pour que Camera.main AR soit à (0, 0, 0) en XZ.
-    /// Formule : XROrigin_AR.position = Vector3.zero - arCamera.localPosition
+    /// Positionne le XR Origin AR dans TempleScene :
+    ///   • Remet la scale à (1,1,1)  — annule la vue aérienne (scale 0.01) du mini-monde.
+    ///   • Place la caméra AR à (ARSpawnPosition) = (SpawnDistance, 0, 0), regardant vers (0,0,0).
+    ///   • Oriente le XR Origin AR selon ARSpawnRotation (vers le joueur VR à l'origine).
+    ///
+    /// Formule : XROrigin_AR.position = ARSpawnPosition - arCamera.localPosition
     /// </summary>
     private void PositionnerAR()
     {
@@ -107,15 +120,32 @@ public class TempleSceneManager : MonoBehaviour
             return;
         }
 
+        // ── 1. Annuler la scale de vue aérienne ───────────────────────────────
+        // En vue aérienne, ARProximityCalibration applique localScale = 0.01.
+        // Le XR Origin de TempleScene est neuf (nouvelle scène) mais on reset
+        // explicitement pour garantir une vitesse de déplacement normale (1:1).
+        arOrigin.localScale = Vector3.one;
+
+        // ── 2. Positionner selon la calibration ───────────────────────────────
         Camera arCam = Camera.main;
-        Vector3 camLocalPos = arCam != null ? arCam.transform.localPosition : Vector3.zero;
 
-        // Positionne l'origine pour que la caméra AR soit à (0, ?, 0) en XZ
-        arOrigin.position = Vector3.zero - camLocalPos;
-        arOrigin.rotation = Quaternion.identity;
+        // Même logique rotation-puis-position que pour le VR.
+        // Étape 1 — Capturer l'offset caméra en espace local AVANT rotation.
+        Vector3 camLocalFromOrigin = arOrigin.InverseTransformPoint(
+            arCam != null ? arCam.transform.position : arOrigin.position);
 
-        Debug.Log($"[TempleSceneManager] ✓ Joueur AR positionné à l'ancre (0, 0, 0) — " +
-                  $"XROrigin={arOrigin.position:F3}");
+        // Étape 2 — Appliquer la rotation (alignement physique AR→VR → direction -X virtuel).
+        arOrigin.rotation = CalibrationPersistence.ARSpawnRotation;
+
+        // Étape 3 — Positionner l'origine pour que la caméra AR arrive à ARSpawnPosition.
+        // ARSpawnPosition = (SpawnDistance, 0, 0) — l'AR est en face du VR dans TempleScene.
+        arOrigin.position = CalibrationPersistence.ARSpawnPosition
+                            - arOrigin.rotation * camLocalFromOrigin;
+
+        Debug.Log($"[TempleSceneManager] ✓ Joueur AR positionné — " +
+                  $"XROrigin={arOrigin.position:F3}  scale=1  " +
+                  $"(ancre={CalibrationPersistence.ARSpawnPosition:F3}  " +
+                  $"calibration={CalibrationPersistence.HasData})");
     }
 
     // ── Helpers XR Origin ─────────────────────────────────────────────────────

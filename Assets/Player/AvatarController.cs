@@ -1,6 +1,7 @@
 using Unity.Netcode;
 using Unity.XR.CoreUtils;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 [System.Serializable]
 public class MapTransform
@@ -42,7 +43,36 @@ public class AvatarController : MonoBehaviour
 
         if (!_isOwner) return;
 
-        // Trouve le XR Origin dans la scène et assigne automatiquement les vrTargets
+        AcquerirXROrigin();
+
+        // FIX: Re-acquérir le XR Origin après chaque changement de scène.
+        // Raison : Start() n'est exécuté qu'une fois (dans Scene.unity).
+        // Après la transition vers TempleScene, l'XROrigin de Scene.unity est détruit
+        // → IKHead devient null → l'avatar est figé.
+        // sceneLoaded fire après Awake/Start de la nouvelle scène (XRRigSwitcher a déjà activé le bon rig).
+        SceneManager.sceneLoaded += OnSceneLoaded;
+    }
+
+    private void OnDestroy()
+    {
+        // FIX: Se désabonner pour éviter les fuites mémoire si l'objet est détruit.
+        SceneManager.sceneLoaded -= OnSceneLoaded;
+    }
+
+    // FIX: Callback déclenché après chaque chargement de scène.
+    // Re-acquiert le XROrigin actif dans la nouvelle scène (activé par XRRigSwitcher.Awake).
+    private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+    {
+        if (!_isOwner) return;
+        AcquerirXROrigin();
+    }
+
+    /// <summary>
+    /// Trouve le XR Origin actif dans la scène courante et assigne les vrTargets.
+    /// Appelé dans Start() et après chaque transition de scène (OnSceneLoaded).
+    /// </summary>
+    private void AcquerirXROrigin()
+    {
         var xrOrigin = FindAnyObjectByType<XROrigin>();
         if (xrOrigin == null)
         {
@@ -53,6 +83,10 @@ public class AvatarController : MonoBehaviour
         // Tête + IKHead → Main Camera du XR Origin
         head.vrTarget = xrOrigin.Camera.transform;
         IKHead        = xrOrigin.Camera.transform;
+
+        // FIX: Réinitialiser les mains pour qu'elles soient re-cherchées dans la nouvelle scène.
+        leftHand.vrTarget  = null;
+        rightHand.vrTarget = null;
 
         // Controllers → cherche par nom dans les enfants du XR Origin
         foreach (Transform t in xrOrigin.GetComponentsInChildren<Transform>(true))
@@ -66,6 +100,7 @@ public class AvatarController : MonoBehaviour
         if (rightHand.vrTarget == null) Debug.LogWarning("[AvatarController] Right Controller introuvable !");
 
         _previousHeadPosition = IKHead.position;
+        Debug.Log($"[AvatarController] XR Origin acquis : '{xrOrigin.name}' dans '{xrOrigin.gameObject.scene.name}'");
     }
 
     private void LateUpdate()

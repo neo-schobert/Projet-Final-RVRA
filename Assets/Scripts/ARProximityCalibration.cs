@@ -1,5 +1,6 @@
 using System.Collections;
 using TMPro;
+using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -361,35 +362,71 @@ public class ARProximityCalibration : MonoBehaviour
         CharacterController cc = _arXROrigin.GetComponentInChildren<CharacterController>();
         if (cc != null) cc.enabled = false;
 
-        // ── 2. Appliquer le scale (EN PREMIER — avant tout calcul de position) ─
+        // ── 2. Geler le PlayerAR (avatar réseau) AVANT de remonter la caméra ──
+        // POURQUOI : UniversalPlayerController.Update() suit Camera.main chaque frame.
+        // En vue aérienne, Camera.main passe à ~(33, 75, 94) (centre de la map, altitude 75u).
+        // Sans cette désactivation, PlayerAR.position se synchronise vers (33, 0, 94) via
+        // ClientNetworkTransform → l'avatar AR disparaît à 100+ unités du joueur VR.
+        // On gèle le PlayerAR à sa position de calibration (10 cm devant le VR) pour
+        // qu'il reste visible pendant toute la phase de planification aérienne.
+        GelerAvatarARLocal();
+
+        // ── 3. Appliquer le scale (EN PREMIER — avant tout calcul de position) ─
         // Après scale, l'offset entre _arXROrigin et Camera.main est scalé.
         _arXROrigin.localScale = Vector3.one * _mapScale;
 
-        // ── 3. Positionner pour centrer la caméra au-dessus du centre de la map ─
+        // ── 4. Positionner pour centrer la caméra au-dessus du centre de la map ─
         // On lit l'offset POST-scale (il a changé car localScale modifie les positions enfants).
         Vector3 offsetCamToOrigin = _arXROrigin.position - arCam.transform.position;
         _arXROrigin.position = new Vector3(33f, _aerialHeight, 94f) + offsetCamToOrigin;
 
-        // ── 4. Activer le remapping continu physique → virtuel ───────────────
+        // ── 5. Activer le remapping continu physique → virtuel ───────────────
         // Chaque mètre physique parcouru = _remapFactor unités virtuelles.
         // La demi-map fait ~250 unités ; la zone de jeu physique = _physicalPlayRadius.
         // Facteur = 250 / 2.5 = 100 par défaut (5 m phys couvrent 500 unités virtuelles).
         _remapFactor     = 250f / Mathf.Max(0.1f, _physicalPlayRadius);
         _aerialViewActive = true;
 
-        // ── 5. Cacher le bouton ───────────────────────────────────────────────
+        // ── 6. Cacher le bouton ───────────────────────────────────────────────
         if (_lancerJeuPanel != null)
             _lancerJeuPanel.SetActive(false);
 
-        // ── 6. Réactiver CharacterController ─────────────────────────────────
+        // ── 7. Réactiver CharacterController ─────────────────────────────────
         if (cc != null) cc.enabled = true;
 
-        // ── 7. Log ────────────────────────────────────────────────────────────
+        // ── 8. Log ────────────────────────────────────────────────────────────
         Debug.Log($"[ARProximityCalibration] 🌍 Vue aérienne — " +
                   $"scale={_arXROrigin.localScale.x:F4}  " +
                   $"remapFactor={_remapFactor:F1}  " +
                   $"physRadius={_physicalPlayRadius:F1}m  " +
                   $"(Update() repositionne l'origine chaque frame)");
+    }
+
+    /// <summary>
+    /// Désactive UniversalPlayerController sur le PlayerAR local (dont on est propriétaire).
+    /// Raison : en vue aérienne, Camera.main remonte à ~75 unités d'altitude au centre de
+    /// la map. UniversalPlayerController suit Camera.main → PlayerAR.position se téléporte
+    /// vers (33, 0, 94), loin du joueur VR → avatar AR invisible pour le VR.
+    /// En gelant le composant, le PlayerAR reste à sa position post-calibration (10 cm
+    /// devant le VR) et continue à être rendu correctement par la caméra VR.
+    /// ClientNetworkTransform synchronise alors une position stable (au sol près du VR).
+    /// </summary>
+    private void GelerAvatarARLocal()
+    {
+        foreach (var netObj in FindObjectsByType<NetworkObject>(FindObjectsSortMode.None))
+        {
+            if (!netObj.IsOwner || !netObj.IsPlayerObject) continue;
+
+            var ctrl = netObj.GetComponent<UniversalPlayerController>();
+            if (ctrl == null) continue;
+
+            ctrl.enabled = false;
+            Debug.Log($"[ARProximityCalibration] 🔒 UniversalPlayerController gelé sur '{netObj.name}' " +
+                      $"(pos={netObj.transform.position:F3}) — avatar AR restera visible pour le VR.");
+            return;
+        }
+        Debug.LogWarning("[ARProximityCalibration] GelerAvatarARLocal : PlayerAR local introuvable " +
+                         "(UniversalPlayerController non désactivé).");
     }
 
     // ── Mathématique d'alignement ─────────────────────────────────────────────

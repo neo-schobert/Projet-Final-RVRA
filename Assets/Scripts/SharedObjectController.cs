@@ -1,5 +1,4 @@
 using Unity.Netcode;
-using Unity.Netcode.Components;
 using UnityEngine;
 
 
@@ -10,10 +9,12 @@ using UnityEngine;
 /// AR → drag avec le doigt (automatique)
 ///
 /// ClientNetworkTransform (requis sur le même GameObject) synchronise la position.
-/// IMPORTANT : utilise ClientNetworkTransform (pas NetworkTransform) sur le prefab !
+/// IMPORTANT : utilise ClientNetworkTransform (DA package) sur le prefab, pas NetworkTransform !
+/// Note : [RequireComponent(ClientNetworkTransform)] retiré — le type DA et Unity.Netcode.Components
+///        ont des namespaces distincts; la validation Editor génère un faux positif.
+///        La présence du composant est garantie par convention de prefab.
 /// </summary>
 [RequireComponent(typeof(NetworkObject))]
-[RequireComponent(typeof(ClientNetworkTransform))]
 public class SharedObjectController : NetworkBehaviour
 {
     // ── Appelé depuis l'Inspector (XRGrabInteractable.selectEntered → OnGrabbed) ──

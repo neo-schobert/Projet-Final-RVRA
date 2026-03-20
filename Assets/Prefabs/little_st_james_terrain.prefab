@@ -51,7 +51,7 @@ PrefabInstance:
     - target: {fileID: -7511558181221131132, guid: 51b2ca50871ce4f9484c5a731c45d6cf, type: 3}
       propertyPath: 'm_Materials.Array.data[0]'
       value: 
-      objectReference: {fileID: 2100000, guid: 4f848304d02c1444281449dbf340e195, type: 2}
+      objectReference: {fileID: 2100000, guid: be16d48c08bb3814a8d898ca3071a2e7, type: 2}
     - target: {fileID: 919132149155446097, guid: 51b2ca50871ce4f9484c5a731c45d6cf, type: 3}
       propertyPath: m_Name
       value: little_st_james_terrain

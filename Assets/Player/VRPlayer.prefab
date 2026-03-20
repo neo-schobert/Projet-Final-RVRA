@@ -87,7 +87,7 @@ Transform:
   m_GameObject: {fileID: 4131358501807449931}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0.55855, y: 0, z: 0.74241}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -114,7 +114,7 @@ MonoBehaviour:
   AlwaysReplicateAsRoot: 0
   SynchronizeTransform: 1
   ActiveSceneSynchronization: 0
-  SceneMigrationSynchronization: 0
+  SceneMigrationSynchronization: 1
   SpawnWithObservers: 1
   DontDestroyWithOwner: 0
   AutoObjectParentSync: 1
@@ -567,7 +567,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 941169757140141990, guid: 6fc50ac3441096d42a90467688806f04, type: 3}
       propertyPath: m_LocalPosition.x
-      value: -0.04089
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 941169757140141990, guid: 6fc50ac3441096d42a90467688806f04, type: 3}
       propertyPath: m_LocalPosition.y
@@ -575,7 +575,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 941169757140141990, guid: 6fc50ac3441096d42a90467688806f04, type: 3}
       propertyPath: m_LocalPosition.z
-      value: -3.96272
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 941169757140141990, guid: 6fc50ac3441096d42a90467688806f04, type: 3}
       propertyPath: m_LocalRotation.w
@@ -608,6 +608,10 @@ PrefabInstance:
     - target: {fileID: 8107975898258656347, guid: 6fc50ac3441096d42a90467688806f04, type: 3}
       propertyPath: m_Name
       value: HumanM_BodyMesh Transparent
+      objectReference: {fileID: 0}
+    - target: {fileID: 8608786020257776942, guid: 6fc50ac3441096d42a90467688806f04, type: 3}
+      propertyPath: headBodyOffset.y
+      value: -1.51
       objectReference: {fileID: 0}
     - target: {fileID: 8608786020257776942, guid: 6fc50ac3441096d42a90467688806f04, type: 3}
       propertyPath: head.trackingPositionOffset.y
@@ -643,7 +647,7 @@ PrefabInstance:
     m_Modifications:
     - target: {fileID: -8679921383154817045, guid: f972605307e234e4a8c9fef811286aa9, type: 3}
       propertyPath: m_LocalPosition.x
-      value: -0.04089
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: f972605307e234e4a8c9fef811286aa9, type: 3}
       propertyPath: m_LocalPosition.y
@@ -651,7 +655,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: f972605307e234e4a8c9fef811286aa9, type: 3}
       propertyPath: m_LocalPosition.z
-      value: -3.96272
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: f972605307e234e4a8c9fef811286aa9, type: 3}
       propertyPath: m_LocalRotation.w
@@ -791,7 +795,7 @@ MonoBehaviour:
     trackingRotationOffset: {x: 0, y: -90, z: -90}
   turnSmoothness: 5
   IKHead: {fileID: 6097323269869185986}
-  headBodyOffset: {x: 0, y: -1.17, z: 0}
+  headBodyOffset: {x: 0, y: -1.51, z: 0}
   animator: {fileID: 5016244444559066790}
   animationSmoothness: 10
 --- !u!114 &1362389672641616467

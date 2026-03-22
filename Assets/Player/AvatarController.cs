@@ -27,6 +27,10 @@ public class AvatarController : MonoBehaviour
     [SerializeField] private Transform IKHead;
     [SerializeField] private Vector3 headBodyOffset;
 
+    [Header("Ground Clamping")]
+    [SerializeField] private LayerMask groundMask = ~0;
+    [SerializeField] private float groundRaycastOriginHeight = 2f;
+
     [Header("Animation")]
     [SerializeField] private Animator animator;
     [SerializeField] private float animationSmoothness = 10f;
@@ -110,7 +114,14 @@ public class AvatarController : MonoBehaviour
         if (IKHead == null) return;
 
         // -- IK existant --
-        transform.position = IKHead.position + headBodyOffset;
+        Vector3 targetPos = IKHead.position + headBodyOffset;
+
+        // Raycast vers le bas pour trouver le sol réel et éviter que les jambes traversent le terrain
+        Vector3 rayOrigin = new Vector3(targetPos.x, targetPos.y + groundRaycastOriginHeight, targetPos.z);
+        if (Physics.Raycast(rayOrigin, Vector3.down, out RaycastHit hit, groundRaycastOriginHeight + 2f, groundMask))
+            targetPos.y = Mathf.Max(targetPos.y, hit.point.y);
+
+        transform.position = targetPos;
         transform.forward = Vector3.Lerp(
             transform.forward,
             Vector3.ProjectOnPlane(IKHead.forward, Vector3.up).normalized,

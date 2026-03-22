@@ -56,6 +56,10 @@ PrefabInstance:
       propertyPath: m_Name
       value: little_st_james_terrain
       objectReference: {fileID: 0}
+    - target: {fileID: 919132149155446097, guid: 51b2ca50871ce4f9484c5a731c45d6cf, type: 3}
+      propertyPath: m_Layer
+      value: 7
+      objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects:
@@ -128,6 +132,10 @@ PrefabInstance:
     - target: {fileID: 8191337359296515599, guid: 8a8ade231d4e4115a527f463ebb01a8b, type: 3}
       propertyPath: m_Name
       value: Water Surface
+      objectReference: {fileID: 0}
+    - target: {fileID: 8191337359296515599, guid: 8a8ade231d4e4115a527f463ebb01a8b, type: 3}
+      propertyPath: m_Layer
+      value: 7
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []

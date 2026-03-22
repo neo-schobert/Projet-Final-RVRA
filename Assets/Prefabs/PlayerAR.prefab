@@ -10,11 +10,13 @@ GameObject:
   m_Component:
   - component: {fileID: 4622199502642355143}
   - component: {fileID: 4525480140802477271}
-  - component: {fileID: 5694541608266652741}
-  - component: {fileID: 7346061973808217042}
+  - component: {fileID: 2100202332657536731}
+  - component: {fileID: 5130894162639500760}
+  - component: {fileID: 819288729001016200}
+  - component: {fileID: 4892302013913254917}
   m_Layer: 0
   m_Name: PlayerAR
-  m_TagString: Untagged
+  m_TagString: ARPlayer
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
@@ -60,7 +62,7 @@ MonoBehaviour:
   AutoObjectParentSync: 1
   SyncOwnerTransformWhenParented: 1
   AllowOwnerToParent: 0
---- !u!114 &5694541608266652741
+--- !u!114 &2100202332657536731
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -69,11 +71,11 @@ MonoBehaviour:
   m_GameObject: {fileID: 5411016011129366311}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: da52bf8bbc1de48cfb221a6ff30f7972, type: 3}
+  m_Script: {fileID: 11500000, guid: d56c1e54614a38247993a1e8b6b37b4d, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Unity.Multiplayer.Center.NetcodeForGameObjectsExample::Unity.Multiplayer.Center.NetcodeForGameObjectsExample.ClientNetworkTransform
+  m_EditorClassIdentifier: Assembly-CSharp::ClientNetworkTransform
   ShowTopMostFoldoutHeaderGroup: 1
-  NetworkTransformExpanded: 1
+  NetworkTransformExpanded: 0
   AutoOwnerAuthorityTickOffset: 1
   PositionInterpolationType: 0
   RotationInterpolationType: 0
@@ -84,7 +86,7 @@ MonoBehaviour:
   RotationMaxInterpolationTime: 0.1
   ScaleLerpSmoothing: 1
   ScaleMaxInterpolationTime: 0.1
-  AuthorityMode: 1
+  AuthorityMode: 0
   TickSyncChildren: 0
   UseUnreliableDeltas: 0
   SyncPositionX: 1
@@ -106,7 +108,7 @@ MonoBehaviour:
   SwitchTransformSpaceWhenParented: 0
   Interpolate: 1
   SlerpPosition: 0
---- !u!114 &7346061973808217042
+--- !u!114 &5130894162639500760
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -115,10 +117,53 @@ MonoBehaviour:
   m_GameObject: {fileID: 5411016011129366311}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 2d89710706d44461a81976adc46e48ba, type: 3}
+  m_Script: {fileID: 11500000, guid: 095f77e3635135745a3756e5c82e0d6e, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::UniversalPlayerController
+  m_EditorClassIdentifier: Assembly-CSharp::PlayerSetup
   ShowTopMostFoldoutHeaderGroup: 1
+--- !u!65 &819288729001016200
+BoxCollider:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5411016011129366311}
+  m_Material: {fileID: 0}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_LayerOverridePriority: 0
+  m_IsTrigger: 0
+  m_ProvidesContacts: 0
+  m_Enabled: 1
+  serializedVersion: 3
+  m_Size: {x: 0.5, y: 1.8, z: 0.2}
+  m_Center: {x: 0, y: 0.99, z: 0}
+--- !u!114 &4892302013913254917
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5411016011129366311}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: eb250c0829244334b8e9a2f0a873aef2, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::MissileLauncher
+  ShowTopMostFoldoutHeaderGroup: 1
+  missilePrefab: {fileID: 7177012960636607378, guid: 79d82f01484ce1f428c9afc1c4b8e3c4, type: 3}
+  arcHeight: 50
+  flightDuration: 3
+  explosionRadius: 10
+  explosionDamage: 100
+  explosionVFX: {fileID: 7522982781472501662, guid: 0b787826601ecda4b8fe6c0c389f43a1, type: 3}
+  mapLayer:
+    serializedVersion: 2
+    m_Bits: 128
 --- !u!1001 &8616179634279426465
 PrefabInstance:
   m_ObjectHideFlags: 0

@@ -87,8 +87,11 @@ public class ARProximityCalibration : MonoBehaviour
     // ── Vue aérienne : remapping physique → virtuel ────────────────────────────
     // Actif après OnLancerJeuButtonPressed. Update() repositionne l'XR Origin
     // chaque frame pour que le déplacement physique couvre toute la map.
-    private bool  _aerialViewActive = false;
-    private float _remapFactor      = 100f; // unités virtuelles par mètre physique
+    private bool    _aerialViewActive  = false;
+    private float   _remapFactor       = 100f;          // unités virtuelles par mètre physique
+    private Vector3 _camLocalAtLaunch  = Vector3.zero;  // localPos ARCore au moment de "Lancer le jeu"
+                                                        // → seul le DELTA depuis ce point est remappé
+                                                        // → le joueur est centré en (33,aerial,94) au départ
 
     // ── Tracking physique continu ───────────────────────────────────────────────
     // Actif dès la première calibration réussie.
@@ -181,7 +184,12 @@ public class ARProximityCalibration : MonoBehaviour
         //   → origin_world = desired_cam_world - cam_local * scale
         if (!_aerialViewActive || _arXROrigin == null) return;
 
-        Vector3 camLocal = arCam.transform.localPosition;
+        // DELTA depuis le point de lancement (= 0,0,0 au démarrage de la vue aérienne).
+        // On soustrait _camLocalAtLaunch pour que la position physique au moment du
+        // clic sur "Lancer le jeu" corresponde exactement au centre de la map (33,aerial,94).
+        // Sans ce delta, la position absolue ARCore (ex: 0.5 m) × remapFactor (100)
+        // décalerait le joueur de 50 unités dès le premier frame.
+        Vector3 camLocal = arCam.transform.localPosition - _camLocalAtLaunch;
         float   s        = _mapScale;
 
         // Convertir le déplacement physique (espace local ARCore) en espace monde
@@ -225,18 +233,12 @@ public class ARProximityCalibration : MonoBehaviour
     {
         if (CalibrationPersistence.Instance == null) return;
 
-        // Position physique AR dans l'espace virtuel calibré
-        Vector3 localDelta    = arCam.transform.localPosition - _camLocalPosAtCalib;
-        Vector3 arCurrentPhys = _arPhysPosAtCalib + _xrOriginRotAtCalib * localDelta;
-
-        // Position physique VR : PlayerSetup.transform.position (synchro réseau)
-        // On cherche spécifiquement le non-owner pour éviter de prendre notre propre PlayerSetup.
-        if (_remoteVRPlayer == null)
-            _remoteVRPlayer = TrouverJoueurVRDistant();
-
-        if (_remoteVRPlayer == null) return; // Solo sans VR — pas de mise à jour
-
-        CalibrationPersistence.UpdateOffset(arCurrentPhys, _remoteVRPlayer.transform.position);
+        // On utilise la position WORLD de la caméra AR (arCam.transform.position).
+        // AR n'a pas de locomotion virtuelle → cette position ne change que via
+        // le mouvement physique du joueur AR dans le monde réel.
+        // CalibrationPersistence calcule le delta vs la position au moment de la calibration
+        // et le transforme en coordonnées TempleScene.
+        CalibrationPersistence.UpdateARDisplacement(arCam.transform.localPosition);
     }
 
     // ── Calibration (appelée par le bouton onClick) ────────────────────────────
@@ -295,34 +297,36 @@ public class ARProximityCalibration : MonoBehaviour
         Debug.Log($"[ARProximityCalibration] Cible VR = PlayerSetup distant (non-owner) → " +
                   $"pos={vrTarget.position:F3}  yaw={vrTarget.eulerAngles.y:F1}°");
 
-        Vector3 vrPhysPos = vrTarget.position;
-
-        // ── Étape 2 : sauvegarder l'offset dans CalibrationPersistence ───────
-        CalibrationPersistence.SaveOffset(arPhysPos, vrPhysPos);
+        // ── Étape 2 : capturer le yaw VR AVANT alignement ────────────────────
+        // Nécessaire pour VRSpawnRotation (mapper direction physique VR → +X virtuel).
+        float vrYaw = vrTarget.eulerAngles.y;
 
         // ── Étape 3 : aligner le XR Origin AR sur la caméra VR ───────────────
         AlignerARSurVR(arCam, vrTarget);
 
-        // ── Étape 4 : activer le tracking physique continu ────────────────────
-        // Stocker les références pour pouvoir recalculer la position physique AR
-        // à tout moment, même pendant la vue aérienne (où Camera.main est remappée).
-        _arPhysPosAtCalib   = arCam.transform.position;     // ≈ vrTarget.position (caméras alignées)
-        _camLocalPosAtCalib = arCam.transform.localPosition; // localPos physique au moment du calibrage
-        _xrOriginRotAtCalib = _arXROrigin.rotation;          // rotation XR Origin post-alignement
-        // _remoteVRPlayer est déjà validé non-null plus haut — pas besoin de re-chercher.
+        // ── Étape 4 : activer le tracking physique continu ───────────────────
+        // Capturé POST-alignement → dans le système de coordonnées calibré.
+        _arPhysPosAtCalib   = arCam.transform.position;
+        _camLocalPosAtCalib = arCam.transform.localPosition;
+        _xrOriginRotAtCalib = _arXROrigin.rotation;
         _trackingActive     = true;
+
+        // ── Étape 5 : sauvegarder la calibration ─────────────────────────────
+        // vrYaw + arOriginRotation suffisent — plus besoin de la position VR.
+        // Le déplacement AR (Vector3.zero au départ) sera mis à jour chaque frame
+        // dans MettreAJourOffsetPhysique via UpdateARDisplacement.
+        // On passe la position world de la caméra AR POST-alignement = point de référence
+        // pour le calcul du déplacement physique AR dans MettreAJourOffsetPhysique.
+        CalibrationPersistence.SaveCalibration(vrYaw, _xrOriginRotAtCalib, arCam.transform.localPosition);
 
         IsCalibrated = true;
         AfficherFeedback("✓ Calibration réussie !");
 
-        // Afficher le bouton "Lancer le jeu" maintenant que la calibration est faite
         if (_lancerJeuPanel != null)
             _lancerJeuPanel.SetActive(true);
 
         Debug.Log($"[ARProximityCalibration] ✓ Calibration OK — " +
-                  $"VR XROrigin pos={vrPhysPos:F3}  AR cam={arPhysPos:F3}  " +
-                  $"offset={CalibrationPersistence.PhysicalOffset:F3}  " +
-                  $"spawnDist={CalibrationPersistence.SpawnDistance:F3}m");
+                  $"VR yaw={vrYaw:F1}°  AR origin rot={_xrOriginRotAtCalib.eulerAngles:F1}°");
     }
 
     // ── Vue aérienne (appelée par le bouton "Lancer le jeu") ──────────────────
@@ -369,15 +373,22 @@ public class ARProximityCalibration : MonoBehaviour
 
         // ── 3. Positionner pour centrer la caméra au-dessus du centre de la map ─
         // On lit l'offset POST-scale (il a changé car localScale modifie les positions enfants).
-        Vector3 offsetCamToOrigin = _arXROrigin.position - arCam.transform.position;
-        _arXROrigin.position = new Vector3(33f, _aerialHeight, 94f) + offsetCamToOrigin;
+        // Vector3 offsetCamToOrigin = _arXROrigin.position - arCam.transform.position;
+        _arXROrigin.position = new Vector3(33f, _aerialHeight, 94f);
 
         // ── 4. Activer le remapping continu physique → virtuel ───────────────
         // Chaque mètre physique parcouru = _remapFactor unités virtuelles.
         // La demi-map fait ~250 unités ; la zone de jeu physique = _physicalPlayRadius.
         // Facteur = 250 / 2.5 = 100 par défaut (5 m phys couvrent 500 unités virtuelles).
-        _remapFactor     = 250f / Mathf.Max(0.1f, _physicalPlayRadius);
+        _remapFactor      = 250f / Mathf.Max(0.1f, _physicalPlayRadius);
+
+        // Capturer la localPosition ARCore au moment du lancement.
+        // Update() n'utilisera que le DELTA depuis ce point → joueur centré en (33,aerial,94)
+        // même s'il s'est déplacé physiquement avant de cliquer sur "Lancer le jeu".
+        _camLocalAtLaunch = arCam.transform.localPosition;
         _aerialViewActive = true;
+
+        Debug.Log($"[ARProximityCalibration] camLocalAtLaunch={_camLocalAtLaunch:F3} (référence vue aérienne).");
 
         // ── 5. Cacher le bouton ───────────────────────────────────────────────
         if (_lancerJeuPanel != null)

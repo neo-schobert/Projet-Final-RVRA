@@ -5,6 +5,8 @@ TagManager:
   serializedVersion: 3
   tags:
   - ARPlayer
+  - VRPlayer
+  - DestroyBullet
   layers:
   - Default
   - TransparentFX
@@ -14,7 +16,7 @@ TagManager:
   - UI
   - ARPlayer
   - Map
-  - 
+  - DestroyBullet
   - 
   - 
   - 

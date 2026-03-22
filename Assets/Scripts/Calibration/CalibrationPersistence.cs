@@ -1,143 +1,109 @@
 using UnityEngine;
 
 /// <summary>
-/// Singleton DontDestroyOnLoad — mémorise l'offset physique VR→AR capturé lors
-/// du calibrage et fournit les positions/rotations de spawn dans TempleScene.
+/// Singleton DontDestroyOnLoad — mémorise la calibration et fournit les positions/rotations
+/// de spawn dans TempleScene.
 ///
-/// SETUP :
-///   Ce script est déjà placé sur "CalibrationPersistence" dans Scene.unity.
-///   Il survivra automatiquement à la transition de scène.
+/// DESIGN :
+///   arCam.transform.localPosition = position physique ARCore en mètres réels,
+///   relative à Camera Offset (parent direct). Indépendante du XR Origin.
+///   → Même en vue aérienne (XR Origin repositionné), localPosition reste correct.
 ///
-/// FLUX :
-///   1. ARProximityCalibration.SaveOffset(arPos, vrPos) lors du calibrage.
-///   2. SceneTriggerVR déclenche la transition — aucune sauvegarde supplémentaire
-///      nécessaire, l'offset est déjà mémorisé.
-///   3. TempleSceneManager lit VRSpawnPosition/Rotation et ARSpawnPosition/Rotation au Start().
-///
-/// LOGIQUE DE SPAWN dans TempleScene :
-///   • VR spawn à (0, 0, 0) — c'est l'ancre de référence, regarde vers l'AR.
-///   • AR spawn à (SpawnDistance, 0, 0) en regardant vers (0, 0, 0).
-///   SpawnDistance = magnitude XZ de l'offset physique VR−AR capturé au calibrage.
+///   Formule finale :
+///   ARSpawnPosition = VRSpawnRotation * xrOriginRot * (localPos_now - localPos_calib)
+///     - localPos_now   : position ARCore actuelle (mètres physiques)
+///     - localPos_calib : position ARCore au moment de la calibration
+///     - xrOriginRot    : rotation XR Origin post-alignement (local → monde Scene.unity)
+///     - VRSpawnRotation: monde Scene.unity → espace TempleScene (VR at 0,0,0 looking +X)
 /// </summary>
 public class CalibrationPersistence : MonoBehaviour
 {
     public static CalibrationPersistence Instance { get; private set; }
-
-    // ── Données de calibration ─────────────────────────────────────────────
-    /// <summary>
-    /// Offset physique = vrCamera.position - arCamera.position au moment du calibrage.
-    /// Représente la distance et direction du VR par rapport à l'AR dans l'espace réel.
-    /// </summary>
-    public static Vector3 PhysicalOffset { get; private set; }
-
-    /// <summary>True après un appel à SaveOffset réussi.</summary>
     public static bool HasData { get; private set; }
 
-    // ── Données dérivées pour TempleScene ──────────────────────────────────
-    /// <summary>
-    /// Distance de spawn = magnitude XZ de l'offset physique.
-    /// Formule : sqrt(offset.x² + offset.z²)
-    /// </summary>
-    public static float SpawnDistance =>
-        Mathf.Sqrt(PhysicalOffset.x * PhysicalOffset.x +
-                   PhysicalOffset.z * PhysicalOffset.z);
+    // ── Données de calibration ──────────────────────────────────────────────
+    private static float      _vrYawAtCalib         = 0f;
+    private static Quaternion _xrOriginRotAtCalib   = Quaternion.identity;
+    private static Vector3    _camLocalPosAtCalib   = Vector3.zero;
 
-    // ── Spawn VR ───────────────────────────────────────────────────────────
+    // ── Spawn actuel ────────────────────────────────────────────────────────
+    private static Vector3    _arPhysicalDisplacement = Vector3.zero;
 
-    /// <summary>
-    /// Position de spawn du XR Origin VR dans TempleScene :
-    /// VR spawn à l'ancre (0, 0, 0) — point de référence fixe.
-    /// </summary>
-    public static Vector3 VRSpawnPosition => Vector3.zero;
+    // ── API spawn VR ────────────────────────────────────────────────────────
+    public static Vector3    VRSpawnPosition => Vector3.zero;
 
-    /// <summary>
-    /// Rotation de spawn du XR Origin VR dans TempleScene.
-    /// Aligne l'espace de tracking VR pour que la direction physique VR→AR
-    /// corresponde à la direction virtuelle +X (vers (SpawnDistance, 0, 0)).
-    /// </summary>
     public static Quaternion VRSpawnRotation
     {
         get
         {
-            // Direction physique du VR vers l'AR (projetée sur XZ)
-            // PhysicalOffset = vrPos - arPos → direction VR→AR = -PhysicalOffset
-            Vector3 physDirVrToAr = new Vector3(-PhysicalOffset.x, 0f, -PhysicalOffset.z);
-            if (physDirVrToAr.sqrMagnitude < 1e-6f) return Quaternion.identity;
-            // Angle à appliquer pour faire correspondre physDirVrToAr → +X virtuel
-            float angle = Vector3.SignedAngle(physDirVrToAr.normalized, Vector3.right, Vector3.up);
+            if (!HasData) return Quaternion.identity;
+            // Direction physique VR→AR au moment de la calibration = vrYaw forward.
+            // On la mappe vers +X virtuel dans TempleScene.
+            Vector3 vrForward = Quaternion.Euler(0f, _vrYawAtCalib, 0f) * Vector3.forward;
+            float   angle     = Vector3.SignedAngle(vrForward, Vector3.right, Vector3.up);
             return Quaternion.AngleAxis(angle, Vector3.up);
         }
     }
 
-    // ── Spawn AR ───────────────────────────────────────────────────────────
+    // ── API spawn AR ────────────────────────────────────────────────────────
+    public static Vector3    ARSpawnPosition  => _arPhysicalDisplacement;
 
     /// <summary>
-    /// Position de spawn du XR Origin AR dans TempleScene :
-    /// AR spawn sur l'axe X positif à la distance SpawnDistance, en face du VR.
+    /// Rotation du XR Origin AR dans TempleScene.
+    /// = VRSpawnRotation * _xrOriginRotAtCalib
+    /// → préserve le mapping physique local → TempleScene.
     /// </summary>
-    public static Vector3 ARSpawnPosition => new Vector3(SpawnDistance, 0f, 0f);
+    public static Quaternion ARSpawnRotation  => VRSpawnRotation * _xrOriginRotAtCalib;
 
-    /// <summary>
-    /// Rotation de spawn du XR Origin AR dans TempleScene.
-    /// Aligne l'espace de tracking AR pour que la direction physique AR→VR
-    /// corresponde à la direction virtuelle -X (vers (0, 0, 0)).
-    /// </summary>
-    public static Quaternion ARSpawnRotation
-    {
-        get
-        {
-            // Direction physique de l'AR vers le VR (projetée sur XZ)
-            // PhysicalOffset = vrPos - arPos → direction AR→VR = +PhysicalOffset
-            Vector3 physDirArToVr = new Vector3(PhysicalOffset.x, 0f, PhysicalOffset.z);
-            if (physDirArToVr.sqrMagnitude < 1e-6f) return Quaternion.identity;
-            // Angle à appliquer pour faire correspondre physDirArToVr → -X virtuel
-            float angle = Vector3.SignedAngle(physDirArToVr.normalized, -Vector3.right, Vector3.up);
-            return Quaternion.AngleAxis(angle, Vector3.up);
-        }
-    }
+    public static float SpawnDistance =>
+        new Vector2(_arPhysicalDisplacement.x, _arPhysicalDisplacement.z).magnitude;
 
-    // ───────────────────────────────────────────────────────────────────────
-
+    // ── Lifecycle ───────────────────────────────────────────────────────────
     private void Awake()
     {
-        if (Instance != null && Instance != this)
-        {
-            Destroy(gameObject);
-            return;
-        }
+        if (Instance != null && Instance != this) { Destroy(gameObject); return; }
         Instance = this;
         DontDestroyOnLoad(gameObject);
-        Debug.Log("[CalibrationPersistence] Singleton prêt — survivra à la transition de scène.");
     }
 
     // ── API publique ────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Sauvegarde l'offset physique entre les deux joueurs au moment du calibrage.
-    /// Appelé par ARProximityCalibration juste avant l'alignement du XR Origin AR.
+    /// Appelé une fois juste après AlignerARSurVR.
     /// </summary>
-    /// <param name="arPhysicalPosition">Camera.main.position côté AR au moment du calibrage.</param>
-    /// <param name="vrPhysicalPosition">PlayerSetup.transform.position côté VR au moment du calibrage.</param>
-    public static void SaveOffset(Vector3 arPhysicalPosition, Vector3 vrPhysicalPosition)
+    /// <param name="vrYaw">vrTarget.eulerAngles.y au moment de la calibration.</param>
+    /// <param name="xrOriginRot">_arXROrigin.rotation APRÈS alignement.</param>
+    /// <param name="camLocalPosAtCalib">arCam.transform.localPosition APRÈS alignement.</param>
+    public static void SaveCalibration(float vrYaw, Quaternion xrOriginRot, Vector3 camLocalPosAtCalib)
     {
-        PhysicalOffset = vrPhysicalPosition - arPhysicalPosition;
-        HasData        = true;
+        _vrYawAtCalib       = vrYaw;
+        _xrOriginRotAtCalib = xrOriginRot;
+        _camLocalPosAtCalib = camLocalPosAtCalib;
+        _arPhysicalDisplacement = Vector3.zero;
+        HasData             = true;
 
-        Debug.Log($"[CalibrationPersistence] ✓ Offset sauvegardé → " +
-                  $"offset={PhysicalOffset:F3} | " +
-                  $"SpawnDistance={SpawnDistance:F3}m | " +
-                  $"VR spawn={VRSpawnPosition:F3} rot={VRSpawnRotation.eulerAngles:F1} | " +
-                  $"AR spawn={ARSpawnPosition:F3}");
+        Debug.Log($"[CalibrationPersistence] ✓ Calibration — " +
+                  $"vrYaw={vrYaw:F1}° | xrOriginRot={xrOriginRot.eulerAngles:F1}° | " +
+                  $"camLocalAtCalib={camLocalPosAtCalib:F3}");
     }
 
     /// <summary>
-    /// Met à jour l'offset physique en silence — appelé chaque frame par ARProximityCalibration
-    /// pour tracker la distance réelle VR↔AR pendant toute la session (vue normale ET aérienne).
-    /// Contrairement à SaveOffset, n'émet pas de log pour éviter le flood.
+    /// Mis à jour chaque frame par ARProximityCalibration.
+    /// camLocalPosCurrent = arCam.transform.localPosition (position ARCore physique actuelle).
     /// </summary>
-    public static void UpdateOffset(Vector3 arPhysicalPosition, Vector3 vrPhysicalPosition)
+    public static void UpdateARDisplacement(Vector3 camLocalPosCurrent)
     {
-        PhysicalOffset = vrPhysicalPosition - arPhysicalPosition;
-        // HasData reste inchangé — UpdateOffset n'est appelé qu'après SaveOffset initial.
+        if (!HasData) return;
+
+        // Déplacement physique en mètres réels depuis la calibration (dans l'espace local ARCore)
+        Vector3 localDelta = camLocalPosCurrent - _camLocalPosAtCalib;
+        localDelta.y = 0f;
+
+        // localDelta est dans l'espace local du XR Origin (espace ARCore).
+        // _xrOriginRotAtCalib le convertit en espace monde Scene.unity.
+        // VRSpawnRotation le convertit en espace TempleScene (VR à l'origine, looking +X).
+        _arPhysicalDisplacement = VRSpawnRotation * (_xrOriginRotAtCalib * localDelta);
+
+        Debug.Log($"[CalibPersist] localDelta={localDelta:F3} → ARSpawnPos={_arPhysicalDisplacement:F3}");
     }
 }

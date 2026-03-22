@@ -61,6 +61,19 @@ public class Shoot : NetworkBehaviour
         }
     }
 
+    private void OnDestroy()
+    {
+        // XRIT peut appeler selectExited (→ OnReleased → WasHeld=false) AVANT que
+        // NGO retire les listeners dans OnNetworkDespawn.
+        // OnDestroy s'exécute en dernier : on re-sauvegarde l'état si le gun était tenu.
+        if (_isHeld && IsOwner)
+        {
+            GunPersistence.WasHeld      = true;
+            // WasRightHand est déjà correct (set dans OnGrabbed)
+            Debug.Log("[Shoot] OnDestroy — gun tenu, WasHeld=true sauvegardé.");
+        }
+    }
+
     private void OnGrabbed(SelectEnterEventArgs args)
     {
         _currentInteractor = args.interactorObject as XRBaseInteractor;

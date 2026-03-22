@@ -3111,7 +3111,7 @@ MonoBehaviour:
   ShowTopMostFoldoutHeaderGroup: 1
   bulletPrefab: {fileID: 2086261179823682334, guid: 5aff34f5b8f0f024991c93146a6e4ec7, type: 3}
   spawnPoint: {fileID: 1101646592}
-  bulletSpeed: 5
+  bulletSpeed: 10
   maxBullets: 3
   ammoText: {fileID: 653910150}
   shootActionLeft: {fileID: -5982496924579745919, guid: c348712bda248c246b8c49b3db54643f, type: 3}

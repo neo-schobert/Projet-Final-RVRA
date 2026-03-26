@@ -183,6 +183,24 @@ public class Shoot : NetworkBehaviour
         NetworkObject.ChangeOwnership(rpcParams.Receive.SenderClientId);
     }
 
+    /// <summary>
+    /// Variante de Fire() sans vérification IsOwner.
+    /// Utilisée par GunTempleSetup dans TempleScene où le gun est fixé dans la main
+    /// et l'ownership NGO peut ne pas être encore transféré au bon client.
+    /// </summary>
+    public void FireLocal()
+    {
+        if (_currentBullets.Value <= 0) return;
+        if (bulletPrefab == null) { Debug.LogError("[Shoot] bulletPrefab non assigné !"); return; }
+        if (spawnPoint == null)   { Debug.LogError("[Shoot] spawnPoint non assigné !"); return; }
+
+        if (IsOwner)
+            _currentBullets.Value--;
+
+        SpawnBulletRpc(spawnPoint.position, spawnPoint.rotation);
+        TriggerHaptic();
+    }
+
     public void Fire()
     {
         if (!IsOwner) return;
@@ -205,7 +223,7 @@ public class Shoot : NetworkBehaviour
     // SendTo.Everyone = s'exécute sur tous les clients (y compris l'appelant).
     // Chaque client joue le son localement avec un volume calculé selon
     // sa propre distance au spawnPoint → pas de RPC audio séparé nécessaire.
-    [Rpc(SendTo.Everyone)]
+    [Rpc(SendTo.Everyone, InvokePermission = RpcInvokePermission.Everyone)]
     private void SpawnBulletRpc(Vector3 spawnPos, Quaternion spawnRot)
     {
         // ── Balle ─────────────────────────────────────────────────────────────

@@ -11,10 +11,7 @@ public class HealthUI : MonoBehaviour
 {
     [Header("Texte vie")]
     public TextMeshPro healthText;
-    // Offset local par rapport au parent (player body est à Y=0).
-    // Y=2.0 → au-dessus de la tête. Z=0.3 → légèrement devant.
-    // Y=-0.2 plaçait le texte sous le sol → INVISIBLE.
-    public Vector3 offset = new Vector3(0.3f, -0.2f, 0.5f);
+
 
     [Header("Résultat")]
     public TextMeshProUGUI victoireText;
@@ -53,18 +50,6 @@ public class HealthUI : MonoBehaviour
 
     private void SetupUI()
     {
-        if (healthText == null)
-        {
-            var go = new GameObject("HealthText");
-            go.transform.SetParent(transform);
-            go.transform.localPosition = offset;
-            go.transform.localRotation = Quaternion.identity;
-            go.transform.localScale    = Vector3.one * 0.05f;
-            healthText = go.AddComponent<TextMeshPro>();
-            healthText.alignment = TextAlignmentOptions.BottomRight;
-            healthText.fontSize  = 5f;
-            healthText.color     = Color.white;
-        }
 
         if (victoireText != null) victoireText.gameObject.SetActive(false);
         if (defaiteText  != null) defaiteText.gameObject.SetActive(false);
@@ -79,17 +64,6 @@ public class HealthUI : MonoBehaviour
             _playerHealth.OnHealthChangedEvent -= UpdateText;
     }
 
-    private void LateUpdate()
-    {
-        // Billboard : le texte 3D fait toujours face à la caméra principale.
-        // Sans ça, le TextMeshPro (world space) peut être de dos → invisible.
-        if (healthText == null || !healthText.gameObject.activeSelf) return;
-        Camera cam = Camera.main;
-        if (cam == null) return;
-        Vector3 dir = healthText.transform.position - cam.transform.position;
-        if (dir.sqrMagnitude > 0.001f)
-            healthText.transform.rotation = Quaternion.LookRotation(dir);
-    }
 
     private void UpdateText(float value)
     {

@@ -6,6 +6,10 @@ public class PlayerHealth : NetworkBehaviour
     [Header("Vie")]
     public float maxHealth = 100f;
 
+    [Header("Audio")]
+    [Tooltip("AudioSource avec le clip de dégâts déjà assigné dessus. Le son joue uniquement sur l'owner (VR).")]
+    [SerializeField] private AudioSource _audioSource;
+
     public event System.Action<float> OnHealthChangedEvent;
 
     // FIX : En DA il n'y a pas de serveur. Le joueur est propriétaire de sa propre santé.
@@ -54,6 +58,11 @@ public class PlayerHealth : NetworkBehaviour
     private void ApplyDamageRpc(float damage)
     {
         _currentHealth.Value = Mathf.Max(0f, _currentHealth.Value - damage);
+
+        // Son de dégâts — joue uniquement sur le device owner (VR).
+        // L'AudioListener est sur la caméra VR → le son est entendu en 2D.
+        if (_audioSource != null && _audioSource.clip != null)
+            _audioSource.PlayOneShot(_audioSource.clip);
 
         if (_currentHealth.Value <= 0f)
             Die();

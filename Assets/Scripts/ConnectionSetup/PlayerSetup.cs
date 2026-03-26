@@ -1,5 +1,6 @@
 using System.Collections;
 using Unity.Netcode;
+using Unity.XR.CoreUtils;
 using UnityEngine;
 
 /// <summary>
@@ -28,52 +29,47 @@ public class PlayerSetup : NetworkBehaviour
 
     public override void OnNetworkSpawn()
     {
-        // IsOwner fonctionne en mode Relay (hôte/client) ET en mode DA
         if (!IsOwner) return;
 
-        // On tente de trouver Camera.main immédiatement, mais si elle n'est pas
-        // encore disponible (ex: caméra AR Foundation pas encore initialisée),
-        // Update() réessaiera chaque frame jusqu'à la trouver.
         _cam = Camera.main;
-
         if (_cam != null)
         {
-            transform.position = _cam.transform.position - new Vector3(0f, _cam.transform.position.y, 0f);
-            transform.rotation = Quaternion.Euler(0f, _cam.transform.eulerAngles.y, 0f);
+            AppliquerPosition();
             Debug.Log($"[PlayerSetup] Joueur local prêt → suivi de : {_cam.name}");
         }
         else
         {
             Debug.LogWarning("[PlayerSetup] Camera.main introuvable au spawn — " +
-                             "nouvel essai chaque frame dans Update(). " +
-                             "Vérifie le tag MainCamera sur ta caméra active.");
+                             "nouvel essai dans Update().");
         }
     }
 
     private void Update()
     {
-        // Seulement pour le joueur local (celui dont on est propriétaire)
         if (!IsOwner) return;
 
-        // Réessaye de trouver Camera.main si elle n'était pas disponible au spawn.
-        // Cas typique : caméra AR Foundation initialisée quelques frames après Netcode.
         if (_cam == null)
         {
             _cam = Camera.main;
-            if (_cam == null) return; // pas encore disponible, on réessaie à la prochaine frame
-
-            // Première fois qu'on trouve la caméra : position initiale
-            transform.position = _cam.transform.position - new Vector3(0f, _cam.transform.position.y, 0f);
-            transform.rotation = Quaternion.Euler(0f, _cam.transform.eulerAngles.y, 0f);
-            Debug.Log($"[PlayerSetup] Caméra trouvée en Update() → suivi de : {_cam.name}");
+            if (_cam == null) return;
+            Debug.Log($"[PlayerSetup] Caméra trouvée en Update() → {_cam.name}");
         }
 
-        // Suit la position de la tête (camera) exactement
-        transform.position = _cam.transform.position - new Vector3(0f, _cam.transform.position.y, 0f);
+        AppliquerPosition();
+    }
 
-        // Pour le corps : seulement le yaw (rotation horizontale)
-        float yaw = _cam.transform.eulerAngles.y;
-        transform.rotation = Quaternion.Euler(0f, yaw, 0f);
+    /// <summary>
+    /// Suit Camera.main XZ à Y=0 (position pied du joueur dans l'espace virtuel).
+    /// Camera.main = position réelle du joueur = XR Origin + ARCore localPosition.
+    /// C'est la cible correcte : elle bouge avec le joueur physique.
+    /// L'offset entre Camera.main et XR Origin est normal (décalage ARCore depuis
+    /// le début de session) — XR Origin est une ancre fixe, pas la position du joueur.
+    /// </summary>
+    private void AppliquerPosition()
+    {
+        Vector3 camPos = _cam.transform.position;
+        transform.position = new Vector3(camPos.x, 0f, camPos.z);
+        transform.rotation = Quaternion.Euler(0f, _cam.transform.eulerAngles.y, 0f);
     }
 
 
@@ -85,43 +81,43 @@ public class PlayerSetup : NetworkBehaviour
     // TempleSceneManager ne peut pas positionner les joueurs ni orienter le gameboard.
 
     /// <summary>
-    /// Appelé depuis ARProximityCalibration juste après SaveCalibration.
-    /// Envoie les données de calibration à tous les clients via RPC.
+    /// Appelé depuis ARProximityCalibration juste après la calibration.
+    /// Diffuse les 4 valeurs fondamentales à tous les clients (VR + AR).
     /// </summary>
-    public void SyncCalibrationToAll(float vrYaw, Quaternion xrOriginRot,
-                                     Vector3 camLocalPos, float arCamYaw)
+    public void SyncCalibrationToAll(float vrYaw, Vector3 vrPosition,
+                                     float arYaw, Vector3 arPosition)
     {
-        SyncCalibrationRpc(vrYaw, xrOriginRot, camLocalPos, arCamYaw);
+        SyncCalibrationRpc(vrYaw, vrPosition, arYaw, arPosition);
     }
 
     // InvokePermission.Everyone : AR n'est PAS owner du PlayerSetup VR.
     // Sans cette permission, le RPC envoyé depuis AR est silencieusement ignoré
     // → HasData reste false sur VR → gameboard non orienté, joueurs mal positionnés.
     [Rpc(SendTo.Everyone, InvokePermission = RpcInvokePermission.Everyone)]
-    private void SyncCalibrationRpc(float vrYaw, Quaternion xrOriginRot,
-                                    Vector3 camLocalPos, float arCamYaw)
+    private void SyncCalibrationRpc(float vrYaw, Vector3 vrPosition,
+                                    float arYaw, Vector3 arPosition)
     {
-        CalibrationPersistence.SaveCalibration(vrYaw, xrOriginRot, camLocalPos, arCamYaw);
-        Debug.Log($"[PlayerSetup] ✓ CalibrationSync reçu — vrYaw={vrYaw:F1}° | " +
-                  $"xrOriginRot={xrOriginRot.eulerAngles:F1}° | " +
-                  $"camLocalPos={camLocalPos:F3} | arCamYaw={arCamYaw:F1}°");
+        CalibrationPersistence.SaveCalibration(vrYaw, vrPosition, arYaw, arPosition);
+        Debug.Log($"[PlayerSetup] ✓ CalibrationSync reçu — " +
+                  $"vrYaw={vrYaw:F1}°  vrPos={vrPosition:F3}  " +
+                  $"arYaw={arYaw:F1}°  arPos={arPosition:F3}");
     }
 
     /// <summary>
     /// Appelé depuis ARProximityCalibration.OnLancerJeuButtonPressed juste avant la vue aérienne.
-    /// Diffuse la position/rotation AR finale à tous les clients (y compris VR),
+    /// Diffuse la position/yaw AR finale à tous les clients (y compris VR),
     /// pour que TempleSceneManager place correctement le joueur AR et aligne le gameboard.
     /// </summary>
-    public void SyncFinalARSpawnToAll(Vector3 arPosition, Quaternion arRotation)
+    public void SyncFinalARSpawnToAll(float arYaw, Vector3 arPosition)
     {
-        SyncFinalARSpawnRpc(arPosition, arRotation);
+        SyncFinalARSpawnRpc(arYaw, arPosition);
     }
 
     [Rpc(SendTo.Everyone, InvokePermission = RpcInvokePermission.Everyone)]
-    private void SyncFinalARSpawnRpc(Vector3 arPosition, Quaternion arRotation)
+    private void SyncFinalARSpawnRpc(float arYaw, Vector3 arPosition)
     {
-        CalibrationPersistence.SaveFinalARSpawn(arPosition, arRotation);
-        Debug.Log($"[PlayerSetup] ✓ FinalARSpawn reçu — pos={arPosition:F3} | rot={arRotation.eulerAngles:F1}°");
+        CalibrationPersistence.UpdateAR(arYaw, arPosition);
+        Debug.Log($"[PlayerSetup] ✓ FinalARSpawn reçu — arYaw={arYaw:F1}°  arPos={arPosition:F3}");
     }
 
     private IEnumerator HideAfterDelay(GameObject obj, float delay)

@@ -1,37 +1,47 @@
 using System.Collections;
 using TMPro;
+using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.UI;
+using UnityEngine.Video;
 
 /// <summary>
-/// Système de calibration AR — sans image imprimée, sans action VR.
+/// Système de calibration AR + vidéo d'intro synchronisée en réseau.
 ///
-/// PRINCIPE :
+/// FLUX COMPLET :
+///   1. Le joueur AR calibre (bouton "Calibration") → aligne les espaces AR/VR.
+///   2. Il presse "Lancer le jeu" → RequestLaunchIntroVideo() est appelé.
+///   3. Un Rpc(SendTo.Everyone, InvokePermission.Everyone) diffuse le signal à TOUS les clients.
+///   4. Chaque client joue la vidéo localement (pas de sync frames réseau).
+///   5. À la fin de la vidéo → OnIntroVideoFinished() déclenche le gameplay.
+///
+/// VIDÉO :
+///   • VR  : Canvas World Space positionné et orienté face à la caméra VR.
+///   • AR  : Canvas Screen Space Overlay par-dessus tout le reste (sortingOrder 20).
+///   • RenderTexture partagée entre les deux RawImage.
+///   • AudioSource local sur ce GO pour la piste audio de la vidéo.
+///
+/// PRINCIPE CALIBRATION (inchangé) :
 ///   Le joueur AR colle son téléphone contre le casque du joueur VR.
-///   À cet instant les deux caméras sont au même point physique.
-///   Il appuie sur le bouton "Calibration" (onglet top-right).
-///   Le script :
-///     1. Capture les positions physiques AR et VR (avant tout alignement).
-///     2. Sauvegarde l'offset dans CalibrationPersistence (utilisé pour le spawn TempleScene).
-///     3. Aligne le XR Origin AR sur le XR Origin VR dans l'espace virtuel partagé.
-///
-/// MATHÉMATIQUE DE L'ALIGNEMENT (étape 3) :
-///   1. Rotation   : yaw AR XROrigin += DeltaAngle(yaw_AR_camera, yaw_VR_camera + 180°)
-///                   → place le joueur AR FACE AU joueur VR (face à face), pas dans le même sens.
-///                   Cibler yaw_VR sans +180° inverserait les axes → recul AR = AR va derrière VR.
-///                   Rotation AVANT translation (pivot = XR Origin, pas caméra).
-///   2. Translation: AR XROrigin.position = VR position + 10 cm (direction de regard VR)
-///                   On place le RIG directement — pas de compensation offset caméra.
+///   → Les deux caméras sont au même point physique.
+///   → On aligne le XR Origin AR sur l'espace VR (rotation face-à-face + translation).
 ///
 /// SETUP dans la scène :
-///   A. Ce script est sur le GameObject "Calibration Manager".
+///   A. Ce script est sur un NetworkObject "Calibration Manager".
 ///   B. _arXROrigin → XR Origin (Mobile AR) Transform.
-///   C. _vrXROrigin → XR Origin (PC VR) Transform, assigné depuis l'Inspector.
-///   D. Laisser _buttonPanel / _feedbackPanel vides : l'UI est créée automatiquement.
-///      OU assigner des GameObjects personnalisés depuis l'Inspector.
+///   C. _vrXROrigin → XR Origin (PC VR) Transform.
+///   D. _introClip  → glisse ta vidéo .mp4 (H.264, Transcode ✓).
+///   E. _vrVideoPanel / _arVideoPanel → créés automatiquement si non assignés.
+///   F. _vrCamera   → caméra enfant du XR Origin VR (OBLIGATOIRE pour alignement).
+///   G. _vrStartGameMessage → GameObject activé à la fin de la vidéo.
 /// </summary>
-public class ARProximityCalibration : MonoBehaviour
+[RequireComponent(typeof(AudioSource))]
+public class ARProximityCalibration : NetworkBehaviour
 {
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  INSPECTOR — XR
+    // ═══════════════════════════════════════════════════════════════════════════
+
     [Header("XR — obligatoire")]
     [Tooltip("Transform du XR Origin (Mobile AR). Auto-détecté si non assigné.")]
     [SerializeField] private Transform _arXROrigin;
@@ -39,17 +49,55 @@ public class ARProximityCalibration : MonoBehaviour
     [Tooltip("Transform du XR Origin (PC VR). À assigner depuis l'Inspector.")]
     [SerializeField] private Transform _vrXROrigin;
 
-    [Tooltip("GameObject 'StartGameMessage' présent dans la scène. " +
-             "Glisse-le ici depuis l'Inspector — il sera activé directement quand 'Lancer le jeu' est pressé. " +
-             "Fonctionne en éditeur (les deux joueurs sur la même machine) ET sur device (même scène partagée).")]
-    [SerializeField] private GameObject _vrStartGameMessage;
-
     [Tooltip("Transform de la caméra VR (enfant du XR Origin VR). " +
-             "OBLIGATOIRE pour un alignement précis : la caméra est à hauteur des yeux (~1.7 m), " +
-             "pas au niveau du sol comme le XR Origin. À assigner depuis l'Inspector.")]
+             "OBLIGATOIRE pour un alignement précis.")]
     [SerializeField] private Transform _vrCamera;
 
-    [Header("UI — optionnel (créée automatiquement si vide)")]
+    [Tooltip("GameObject 'StartGameMessage' activé à la fin de la vidéo d'intro. " +
+             "Glisse-le ici depuis l'Inspector.")]
+    [SerializeField] private GameObject _vrStartGameMessage;
+
+    [Tooltip("AudioSource de la musique de fond à mettre en pause pendant la vidéo d'intro. " +
+             "Glisse le GameObject qui porte l'AudioSource depuis l'Inspector.")]
+    [SerializeField] private AudioSource _backgroundMusic;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  INSPECTOR — VIDÉO
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Header("Vidéo d'intro — obligatoire")]
+    [Tooltip("Clip vidéo à jouer au lancement. Format H.264 recommandé, Transcode ✓ dans Unity.")]
+    [SerializeField] private VideoClip _introClip;
+
+    [Tooltip("Durée exacte de la vidéo en secondes. " +
+             "Doit correspondre à la durée réelle du clip pour déclencher OnIntroVideoFinished " +
+             "au bon moment. Par défaut : 40 s.")]
+    [SerializeField] private float _videoDuration = 40f;
+
+    [Header("Vidéo — Panels (créés automatiquement si vide)")]
+    [Tooltip("Canvas World Space devant le casque VR. Créé automatiquement si null.")]
+    [SerializeField] private GameObject _vrVideoPanel;
+
+    [Tooltip("Canvas Screen Space Overlay pour l'AR. Créé automatiquement si null.")]
+    [SerializeField] private GameObject _arVideoPanel;
+
+    [Tooltip("RawImage dans le panel VR qui reçoit la RenderTexture. " +
+             "Auto-détectée si panel assigné manuellement.")]
+    [SerializeField] private RawImage _vrRawImage;
+
+    [Tooltip("RawImage dans le panel AR qui reçoit la RenderTexture. " +
+             "Auto-détectée si panel assigné manuellement.")]
+    [SerializeField] private RawImage _arRawImage;
+
+    [Tooltip("Résolution de la RenderTexture partagée entre les deux RawImage. " +
+             "1920×1080 pour une qualité maximale, 1280×720 pour économiser la mémoire GPU.")]
+    [SerializeField] private Vector2Int _renderTextureResolution = new Vector2Int(1920, 1080);
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  INSPECTOR — CALIBRATION UI
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Header("UI calibration — optionnel (créée automatiquement si vide)")]
     [Tooltip("Panel contenant le bouton Calibration (top-right). Créé auto si null.")]
     [SerializeField] private GameObject _buttonPanel;
 
@@ -62,85 +110,77 @@ public class ARProximityCalibration : MonoBehaviour
     [Tooltip("Durée d'affichage du feedback (secondes).")]
     [SerializeField] private float _feedbackDuration = 3f;
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  INSPECTOR — VUE AÉRIENNE
+    // ═══════════════════════════════════════════════════════════════════════════
+
     [Header("Vue aérienne")]
-    [Tooltip("Hauteur caméra AR au-dessus du centre de la map (unités virtuelles). " +
-             "La map fait 500 unités × 0.01 scale → ~5 m perçus.")]
+    [Tooltip("Hauteur caméra AR au-dessus du centre de la map (unités virtuelles).")]
     [SerializeField] private float _aerialHeight = 75f;
 
     [Tooltip("Facteur d'échelle appliqué au XR Origin AR pour la vue aérienne. " +
              "0.01 → 500 unités virtuelles ≈ 5 m perçus (map entière visible à ses pieds).")]
     [SerializeField] private float _mapScale = 0.01f;
 
-    [Tooltip("Rayon de la zone de jeu physique en mètres (ex : 2.5 pour 5 m × 5 m). " +
-             "Détermine le remapping : 1 m physique = map_half_extent / physical_radius unités virtuelles. " +
-             "Avec 2.5 m et une demi-map de 250 unités → 1 m physique = 100 unités.")]
+    [Tooltip("Rayon de la zone de jeu physique en mètres. " +
+             "Détermine le remapping : 1 m physique = map_half_extent / physical_radius unités virtuelles.")]
     [SerializeField] private float _physicalPlayRadius = 2.5f;
 
-    // ─────────────────────────────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  ÉTAT INTERNE
+    // ═══════════════════════════════════════════════════════════════════════════
 
     /// <summary>True après une première calibration réussie.</summary>
     public static bool IsCalibrated { get; private set; }
 
+    // ── Calibration UI ────────────────────────────────────────────────────────
     private Coroutine _feedbackRoutine;
+    private GameObject _lancerJeuPanel; // créé à runtime dans CreerUIAutomatique()
 
-    // Créé à runtime dans CreerUIAutomatique(). Jamais assigné depuis l'Inspector.
-    // Reste null si _buttonPanel était déjà assigné en Inspector (CreerUIAutomatique non appelée).
-    private GameObject _lancerJeuPanel;
+    // ── Vue aérienne ──────────────────────────────────────────────────────────
+    private bool    _aerialViewActive = false;
+    private float   _remapFactor      = 100f;
+    private Vector3 _camLocalAtLaunch = Vector3.zero;
 
-    // ── Vue aérienne : remapping physique → virtuel ────────────────────────────
-    // Actif après OnLancerJeuButtonPressed. Update() repositionne l'XR Origin
-    // chaque frame pour que le déplacement physique couvre toute la map.
-    private bool    _aerialViewActive  = false;
-    private float   _remapFactor       = 100f;          // unités virtuelles par mètre physique
-    private Vector3 _camLocalAtLaunch  = Vector3.zero;  // localPos ARCore au moment de "Lancer le jeu"
-                                                        // → seul le DELTA depuis ce point est remappé
-                                                        // → le joueur est centré en (33,aerial,94) au départ
+    // ── Tracking physique continu ─────────────────────────────────────────────
+    private bool        _trackingActive         = false;
+    // Position physique du XR Origin sauvegardée juste avant la téléportation
+    // en vue aérienne. Permet de reconstruire la position physique réelle même
+    // quand le XR Origin est à (33, 75, 94) dans le monde virtuel.
+    private Vector3     _physicalXROriginPos    = Vector3.zero;
+    private PlayerSetup _remoteVRPlayer         = null;
 
-    // ── Tracking physique continu ───────────────────────────────────────────────
-    // Actif dès la première calibration réussie.
-    // Permet de calculer la position physique AR dans l'espace virtuel calibré
-    // À TOUT MOMENT — y compris pendant la vue aérienne où Camera.main.position
-    // est remappée et n'est plus utilisable comme position physique.
-    //
-    // Principe :
-    //   arCam.transform.localPosition est mis à jour par ARCore indépendamment
-    //   de la scale/position du XR Origin → toujours en mètres physiques.
-    //   Position physique AR = _arPhysPosAtCalib + _xrOriginRotAtCalib * localDelta
-    //   Position physique VR = PlayerSetup.transform.position (synchro réseau)
-    private bool       _trackingActive     = false;
-    private Vector3    _arPhysPosAtCalib   = Vector3.zero;       // position partagée au calibrage
-    private Vector3    _camLocalPosAtCalib = Vector3.zero;        // localPos caméra au calibrage
-    private Quaternion _xrOriginRotAtCalib = Quaternion.identity; // rotation XR Origin post-calibrage
-    private PlayerSetup _remoteVRPlayer    = null;                // joueur VR distant (réseau)
+    // ── Vidéo ─────────────────────────────────────────────────────────────────
+    private VideoPlayer    _videoPlayer;
+    private RenderTexture  _renderTexture;
+    private bool           _videoIsPlaying = false;
 
-    /// <summary>
-    /// Cherche le PlayerSetup du joueur VR distant — celui dont le joueur AR n'est PAS propriétaire.
-    /// IMPORTANT : FindAnyObjectByType sans filtre peut retourner le propre PlayerSetup de l'AR
-    /// (si le prefab PlayerAR en a un), ce qui donnerait une position erronée (la sienne).
-    /// On filtre explicitement sur !IsOwner pour garantir de trouver le joueur VR.
-    /// </summary>
-    private PlayerSetup TrouverJoueurVRDistant()
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  LIFECYCLE
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    private void Awake()
     {
-        foreach (var ps in FindObjectsByType<PlayerSetup>(FindObjectsSortMode.None))
-        {
-            if (!ps.IsOwner)
-                return ps;
-        }
-        return null;
+        // Initialise le VideoPlayer et la RenderTexture dès Awake
+        // pour que la texture soit prête avant le premier frame
+        InitVideoPlayer();
     }
-
-    // ── Lifecycle ─────────────────────────────────────────────────────────────
 
     private void Start()
     {
-        // Ce script ne fait rien sur le casque VR
+        // Ce script (côté comportement AR) ne s'exécute pas sur le casque VR.
+        // La partie réseau (NetworkBehaviour) reste active sur tous les clients
+        // pour recevoir les RPC de synchronisation vidéo.
         if (XRRigSwitcher.IsVRMode)
         {
-            enabled = false;
+            // Sur VR : créer uniquement le panel vidéo VR (nécessaire pour afficher la vidéo).
+            // La logique AR (calibration, UI, vue aérienne) reste désactivée.
+            if (_vrVideoPanel == null)
+                CreerVRVideoPanel();
             return;
         }
 
-        // Auto-détection du XR Origin AR (actif après XRRigSwitcher.Awake)
+        // ── Auto-détection du XR Origin AR ───────────────────────────────────
         if (_arXROrigin == null)
         {
             Unity.XR.CoreUtils.XROrigin found =
@@ -153,8 +193,7 @@ public class ARProximityCalibration : MonoBehaviour
         }
 
         if (_vrXROrigin == null)
-            Debug.LogWarning("[ARProximityCalibration] _vrXROrigin non assigné dans l'Inspector. " +
-                             "Glisse le XR Origin VR depuis la scène.");
+            Debug.LogWarning("[ARProximityCalibration] _vrXROrigin non assigné.");
 
         // Masquer l'ancienne UI de calibration image si elle existe encore
         GameObject oldSearching = GameObject.Find("SearchingPanel");
@@ -163,54 +202,31 @@ public class ARProximityCalibration : MonoBehaviour
         // Créer l'UI bouton si rien n'est assigné en Inspector
         if (_buttonPanel == null)
             CreerUIAutomatique();
-    }
 
-    // ── Update : tracking physique continu + remapping vue aérienne ──────────
+        // Créer le panel vidéo AR (côté AR uniquement)
+        if (_arVideoPanel == null)
+            CreerARVideoPanel();
+    }
 
     private void Update()
     {
         Camera arCam = Camera.main;
         if (arCam == null) return;
 
+        // Ne rien faire côté VR (pas de vue aérienne ni tracking AR)
+        if (XRRigSwitcher.IsVRMode) return;
+
         // ── A. Tracking physique continu ──────────────────────────────────────
-        // Actif dès la calibration, pendant TOUTE la session (vue normale ET aérienne).
-        // Met à jour CalibrationPersistence avec la distance VR↔AR en temps réel,
-        // pour que le spawn dans TempleScene reflète toujours les positions actuelles.
         if (_trackingActive)
             MettreAJourOffsetPhysique(arCam);
 
         // ── B. Remapping vue aérienne ─────────────────────────────────────────
-        // Actif uniquement après "Lancer le jeu". Repositionne le XR Origin
-        // pour que le déplacement physique (5 m) couvre toute la map (500 u).
-        //
-        //   cam_world = origin_world + cam_local * scale
-        //   → origin_world = desired_cam_world - cam_local * scale
         if (!_aerialViewActive || _arXROrigin == null) return;
 
-        // DELTA depuis le point de lancement (= 0,0,0 au démarrage de la vue aérienne).
-        // On soustrait _camLocalAtLaunch pour que la position physique au moment du
-        // clic sur "Lancer le jeu" corresponde exactement au centre de la map (33,aerial,94).
-        // Sans ce delta, la position absolue ARCore (ex: 0.5 m) × remapFactor (100)
-        // décalerait le joueur de 50 unités dès le premier frame.
         Vector3 camLocal = arCam.transform.localPosition - _camLocalAtLaunch;
         float   s        = _mapScale;
-
-        // Convertir le déplacement physique (espace local ARCore) en espace monde
-        // en tenant compte de la rotation du XR Origin post-calibration.
-        //
-        // POURQUOI : après calibration, _arXROrigin est tourné pour aligner les espaces
-        // VR et AR. Sans cette rotation, un pas physique vers l'avant peut correspondre
-        // à une direction arbitraire sur la map selon l'angle de calibration
-        // (d'où l'impression que le déplacement est inversé ou de travers).
-        //
-        // Formule : cam_world = origin_pos + origin_rot * (s * camLocal)
-        // On veut  : cam_world = centre_map + physWorld * remapFactor
-        // Donc     : origin_pos = centre_map + physWorld * (remapFactor - s)
-        // avec physWorld = origin_rot * camLocal  (local → monde)
         Vector3 physWorld = _arXROrigin.rotation * camLocal;
 
-        // XZ : déplacement physique remappé sur toute la map (100 u/m par défaut).
-        // Y  : lever/baisser le téléphone ajuste l'altitude (zoom vertical).
         _arXROrigin.position = new Vector3(
             33f           + physWorld.x * (_remapFactor - s),
             _aerialHeight + physWorld.y * (_remapFactor - s),
@@ -218,42 +234,311 @@ public class ARProximityCalibration : MonoBehaviour
         );
     }
 
-    /// <summary>
-    /// Recalcule la position physique AR dans l'espace virtuel calibré et met à jour
-    /// CalibrationPersistence en silence (pas de log flood).
-    ///
-    /// Pourquoi localPosition et pas Camera.main.position ?
-    ///   En vue aérienne, Camera.main.position est remappée à ~75 m d'altitude.
-    ///   arCam.transform.localPosition est la position de suivi ARCore relative
-    ///   à Camera Offset (parent direct) — toujours en mètres physiques réels,
-    ///   indépendante de la scale/position du XR Origin.
-    ///
-    /// Pourquoi arCam.transform.eulerAngles.y et pas _arXROrigin.rotation ?
-    ///   ARCore ne tourne pas le XR Origin quand le joueur pivote physiquement —
-    ///   seule la caméra (enfant de Camera Offset) tourne. On capture donc le yaw
-    ///   directement sur la caméra pour détecter les rotations post-calibration.
-    ///
-    /// Formule position :
-    ///   AR_phys = _arPhysPosAtCalib + _xrOriginRotAtCalib × (localPos_now − localPos_calib)
-    ///   VR_phys = PlayerSetup.transform.position (synchronisé réseau, = caméra VR monde)
-    /// </summary>
-    private void MettreAJourOffsetPhysique(Camera arCam)
-    {
-        if (CalibrationPersistence.Instance == null) return;
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  VIDÉO — INITIALISATION
+    // ═══════════════════════════════════════════════════════════════════════════
 
-        CalibrationPersistence.UpdateAR(
-            arCam.transform.localPosition,
-            arCam.transform.eulerAngles.y   // yaw world caméra AR courant
+    /// <summary>
+    /// Crée le VideoPlayer, la RenderTexture partagée et l'AudioSource.
+    /// Appelé dans Awake() → disponible avant tout RPC réseau.
+    /// </summary>
+    private void InitVideoPlayer()
+    {
+        // RenderTexture partagée entre les deux RawImage (VR et AR)
+        _renderTexture = new RenderTexture(
+            _renderTextureResolution.x,
+            _renderTextureResolution.y,
+            0,
+            RenderTextureFormat.ARGB32
         );
+        _renderTexture.name = "IntroVideoRT";
+        _renderTexture.Create();
+
+        // VideoPlayer sur ce GO
+        _videoPlayer = gameObject.AddComponent<VideoPlayer>();
+        _videoPlayer.playOnAwake          = false;
+        _videoPlayer.waitForFirstFrame    = true;
+        _videoPlayer.isLooping            = false;
+        _videoPlayer.renderMode           = VideoRenderMode.RenderTexture;
+        _videoPlayer.targetTexture        = _renderTexture;
+        _videoPlayer.audioOutputMode      = VideoAudioOutputMode.AudioSource;
+        _videoPlayer.clip                 = _introClip;
+
+        // Lie le son à l'AudioSource sur ce GO (ajouté via [RequireComponent])
+        AudioSource audioSrc = GetComponent<AudioSource>();
+        audioSrc.spatialBlend = 0f; // 2D — pas de spatialisation
+        _videoPlayer.SetTargetAudioSource(0, audioSrc);
+
+        // Callback de fin natif (backup si _videoDuration est imprécis)
+        _videoPlayer.loopPointReached += _ =>
+        {
+            if (_videoIsPlaying)
+            {
+                _videoIsPlaying = false;
+                if (_backgroundMusic != null)
+                    _backgroundMusic.UnPause();
+                OnIntroVideoFinished();
+            }
+        };
+
+        Debug.Log($"[ARProximityCalibration] VideoPlayer initialisé " +
+                  $"(RT {_renderTextureResolution.x}×{_renderTextureResolution.y}).");
     }
 
-    // ── Calibration (appelée par le bouton onClick) ────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  VIDÉO — PANELS UI (création automatique)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Crée le panel vidéo AR (Screen Space Overlay, sortingOrder 20).
+    /// Couvre tout l'écran. Caché par défaut.
+    /// </summary>
+    private void CreerARVideoPanel()
+    {
+        GameObject canvasGO = new GameObject("AR_VideoCanvas");
+        Canvas canvas = canvasGO.AddComponent<Canvas>();
+        canvas.renderMode   = RenderMode.ScreenSpaceOverlay;
+        canvas.sortingOrder = 20; // au-dessus du canvas de calibration (sortingOrder 10)
+
+        CanvasScaler scaler = canvasGO.AddComponent<CanvasScaler>();
+        scaler.uiScaleMode         = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+        scaler.referenceResolution = new Vector2(1080, 1920);
+        scaler.matchWidthOrHeight  = 0.5f;
+
+        canvasGO.AddComponent<GraphicRaycaster>();
+
+        // Panel noir plein écran + RawImage
+        GameObject panelGO = new GameObject("AR_VideoPanel");
+        panelGO.transform.SetParent(canvasGO.transform, false);
+
+        Image bg   = panelGO.AddComponent<Image>();
+        bg.color   = Color.black;
+
+        RectTransform rt = panelGO.GetComponent<RectTransform>();
+        rt.anchorMin = Vector2.zero;
+        rt.anchorMax = Vector2.one;
+        rt.offsetMin = Vector2.zero;
+        rt.offsetMax = Vector2.zero;
+
+        // RawImage pour afficher la vidéo
+        GameObject rawGO = new GameObject("VideoRawImage");
+        rawGO.transform.SetParent(panelGO.transform, false);
+
+        _arRawImage         = rawGO.AddComponent<RawImage>();
+        _arRawImage.texture = _renderTexture;
+
+        RectTransform rawRT = rawGO.GetComponent<RectTransform>();
+        rawRT.anchorMin = Vector2.zero;
+        rawRT.anchorMax = Vector2.one;
+        rawRT.offsetMin = Vector2.zero;
+        rawRT.offsetMax = Vector2.zero;
+
+        panelGO.SetActive(false);
+        _arVideoPanel = panelGO;
+
+        Debug.Log("[ARProximityCalibration] AR_VideoPanel créé automatiquement.");
+    }
+
+    /// <summary>
+    /// Crée le panel vidéo VR (World Space Canvas face à la caméra VR).
+    /// Positionné à 2 m devant la caméra VR, scale 0.002 (1080p → ~2m de large).
+    /// Caché par défaut.
+    /// </summary>
+    private void CreerVRVideoPanel()
+    {
+        // On cherche la caméra VR pour positionner le canvas face à elle
+        Camera vrCam = null;
+        if (_vrCamera != null)
+            vrCam = _vrCamera.GetComponent<Camera>();
+        if (vrCam == null && XRRigSwitcher.IsVRMode)
+            vrCam = Camera.main;
+
+        GameObject canvasGO = new GameObject("VR_VideoCanvas");
+
+        Canvas canvas = canvasGO.AddComponent<Canvas>();
+        canvas.renderMode   = RenderMode.WorldSpace;
+        canvas.sortingOrder = 10;
+
+        canvasGO.AddComponent<GraphicRaycaster>();
+
+        // Parenter à la caméra VR pour que le canvas suive le regard en permanence.
+        // Sans parenting, le canvas reste fixe dans le monde et le joueur le perd
+        // dès qu'il bouge la tête d'un millimètre.
+        if (vrCam != null)
+        {
+            canvasGO.transform.SetParent(vrCam.transform, false);
+            canvasGO.transform.localPosition = new Vector3(0f, 0f, 2f); // 2 m devant
+            canvasGO.transform.localRotation = Quaternion.identity;
+            canvasGO.transform.localScale    = Vector3.one * 0.002f;
+            canvas.worldCamera               = vrCam; // nécessaire pour le rendu WorldSpace en VR
+        }
+
+        RectTransform canvasRT = canvasGO.GetComponent<RectTransform>();
+        canvasRT.sizeDelta = new Vector2(1920f, 1080f);
+
+        // Panel noir + RawImage
+        GameObject panelGO = new GameObject("VR_VideoPanel");
+        panelGO.transform.SetParent(canvasGO.transform, false);
+
+        Image bg = panelGO.AddComponent<Image>();
+        bg.color = Color.black;
+
+        RectTransform panelRT = panelGO.GetComponent<RectTransform>();
+        panelRT.anchorMin = Vector2.zero;
+        panelRT.anchorMax = Vector2.one;
+        panelRT.offsetMin = Vector2.zero;
+        panelRT.offsetMax = Vector2.zero;
+
+        GameObject rawGO = new GameObject("VideoRawImage");
+        rawGO.transform.SetParent(panelGO.transform, false);
+
+        _vrRawImage         = rawGO.AddComponent<RawImage>();
+        _vrRawImage.texture = _renderTexture;
+
+        RectTransform rawRT = rawGO.GetComponent<RectTransform>();
+        rawRT.anchorMin = Vector2.zero;
+        rawRT.anchorMax = Vector2.one;
+        rawRT.offsetMin = Vector2.zero;
+        rawRT.offsetMax = Vector2.zero;
+
+        panelGO.SetActive(false);
+        _vrVideoPanel = panelGO;
+
+        Debug.Log("[ARProximityCalibration] VR_VideoPanel créé automatiquement.");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  VIDÉO — SYNCHRONISATION RÉSEAU
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Point d'entrée appelé par OnLancerJeuButtonPressed().
+    /// En Distributed Authority, on envoie directement un Rpc à Everyone.
+    /// </summary>
+    private void RequestLaunchIntroVideo()
+    {
+        if (_introClip == null)
+        {
+            Debug.LogWarning("[ARProximityCalibration] _introClip non assigné — " +
+                             "la vidéo est ignorée, le jeu démarrera directement.");
+            OnIntroVideoFinished();
+            return;
+        }
+
+        PlayIntroVideoRpc();
+    }
+
+    /// <summary>
+    /// Reçu par TOUS les clients (VR + AR), envoyable par n'importe quel client.
+    /// InvokePermission.Everyone = compatible Distributed Authority (pas de serveur dédié).
+    /// </summary>
+    [Rpc(SendTo.Everyone, InvokePermission = RpcInvokePermission.Everyone)]
+    private void PlayIntroVideoRpc()
+    {
+        StartCoroutine(PlayIntroRoutine());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  VIDÉO — LECTURE
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Joue la vidéo sur ce client :
+    ///   1. Affiche le bon panel (VR World Space ou AR Screen Space).
+    ///   2. Lance le VideoPlayer.
+    ///   3. Attend _videoDuration secondes (ou le callback loopPointReached).
+    ///   4. Cache le panel et appelle OnIntroVideoFinished().
+    /// </summary>
+    private IEnumerator PlayIntroRoutine()
+    {
+        if (_videoIsPlaying) yield break; // Évite les doubles appels
+        _videoIsPlaying = true;
+
+        // Assigner la RenderTexture aux RawImage (peut arriver après Awake sur VR)
+        if (_vrRawImage != null && _vrRawImage.texture == null)
+            _vrRawImage.texture = _renderTexture;
+        if (_arRawImage != null && _arRawImage.texture == null)
+            _arRawImage.texture = _renderTexture;
+
+        // Afficher le bon panel selon la plateforme locale
+        GameObject panel = XRRigSwitcher.IsVRMode ? _vrVideoPanel : _arVideoPanel;
+        if (panel != null)
+            panel.SetActive(true);
+        else
+            Debug.LogWarning("[ARProximityCalibration] Panel vidéo null pour ce client. " +
+                             "La vidéo joue en arrière-plan sans rendu visible.");
+
+        // Mettre la musique en pause pendant la vidéo
+        if (_backgroundMusic != null && _backgroundMusic.isPlaying)
+            _backgroundMusic.Pause();
+
+        // Préparer et lancer
+        _videoPlayer.time = 0;
+        _videoPlayer.Play();
+
+        Debug.Log($"[ARProximityCalibration] ▶ Vidéo d'intro lancée " +
+                  $"({(XRRigSwitcher.IsVRMode ? "VR WorldSpace" : "AR ScreenSpace")}, " +
+                  $"durée={_videoDuration}s).");
+
+        // Attendre la durée déclarée.
+        // Le callback loopPointReached (Awake) sert de backup si le clip finit
+        // légèrement avant _videoDuration (arrondi, frameRate variable).
+        yield return new WaitForSeconds(_videoDuration);
+
+        // Stopper proprement si le callback n'a pas déjà tout géré
+        if (_videoIsPlaying)
+        {
+            _videoIsPlaying = false;
+            _videoPlayer.Stop();
+
+            if (panel != null)
+                panel.SetActive(false);
+
+            // Reprendre la musique de fond
+            if (_backgroundMusic != null)
+                _backgroundMusic.UnPause();
+
+            OnIntroVideoFinished();
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  VIDÉO — FIN → LANCEMENT DU JEU
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Appelé quand la vidéo d'intro est terminée (sur TOUS les clients).
+    /// C'est ici que le gameplay réel commence.
+    ///
+    /// Sur VR  : active le StartGameMessage + libère le CharacterController si besoin.
+    /// Sur AR  : la vue aérienne est déjà active (lancée dans OnLancerJeuButtonPressed).
+    ///           Rien de supplémentaire à faire côté AR, le remapping est déjà en cours.
+    /// </summary>
+    private void OnIntroVideoFinished()
+    {
+        Debug.Log("[ARProximityCalibration] ✅ Vidéo d'intro terminée — lancement du jeu.");
+
+        // ── Message début de jeu (VR) ─────────────────────────────────────────
+        if (_vrStartGameMessage != null)
+        {
+            _vrStartGameMessage.SetActive(true);
+            StartCoroutine(CacherStartGameMessage(5f));
+            Debug.Log("[ARProximityCalibration] ✓ StartGameMessage activé.");
+        }
+
+        // ── Tu peux ajouter ici tes propres événements de début de jeu ────────
+        // Exemple :
+        //   GameManager.Instance?.StartGame();
+        //   AudioManager.Instance?.PlayGameMusic();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  CALIBRATION — Bouton "Calibration"
+    // ═══════════════════════════════════════════════════════════════════════════
 
     /// <summary>
     /// Appelée par le bouton "Calibration" sur l'interface AR.
-    /// Le joueur AR doit tenir son téléphone CONTRE le casque VR au moment de l'appui.
-    /// Capture l'offset physique AR→VR, le sauvegarde, puis aligne le XR Origin AR.
-    /// Après calibration réussie, affiche le bouton "Lancer le jeu".
+    /// Le joueur AR doit tenir son téléphone CONTRE le casque VR.
     /// </summary>
     public void OnCalibrationButtonPressed()
     {
@@ -273,78 +558,43 @@ public class ARProximityCalibration : MonoBehaviour
         if (_vrXROrigin == null)
         {
             AfficherFeedback("❌ XR Origin VR non assigné !");
-            Debug.LogWarning("[ARProximityCalibration] _vrXROrigin est null. " +
-                             "Assigne le XR Origin VR dans l'Inspector.");
             return;
         }
 
-        // ── Étape 1 : capturer les positions physiques AVANT alignement ──────
-        // IMPORTANT : _vrCamera et _vrXROrigin sont des GameObjects LOCAUX à la scène.
-        // Sur l'appareil AR, le rig VR est inactif → ces transforms sont à (0,0,0).
-        // La vraie position du joueur VR = PlayerSetup du joueur distant (non-owner),
-        // synchronisée chaque frame via ClientNetworkTransform.
-        Vector3 arPhysPos = arCam.transform.position;
-
-        // Recherche du joueur VR distant — OBLIGATOIREMENT le non-owner.
-        // FindAnyObjectByType sans filtre peut retourner notre propre PlayerSetup → position erronée.
+        // ── Trouver le joueur VR distant ──────────────────────────────────────
         if (_remoteVRPlayer == null)
             _remoteVRPlayer = TrouverJoueurVRDistant();
 
         if (_remoteVRPlayer == null)
         {
             AfficherFeedback("❌ Joueur VR non connecté !\nAttends que le VR rejoigne la session.");
-            Debug.LogWarning("[ARProximityCalibration] Calibration annulée : aucun joueur VR distant trouvé. " +
-                             "Assure-toi que le joueur VR est connecté et que son PlayerSetup est spawné " +
-                             "avant de calibrer.");
             return;
         }
 
         Transform vrTarget = _remoteVRPlayer.transform;
-        Debug.Log($"[ARProximityCalibration] Cible VR = PlayerSetup distant (non-owner) → " +
-                  $"pos={vrTarget.position:F3}  yaw={vrTarget.eulerAngles.y:F1}°");
 
-        // ── Étape 2 : capturer le yaw VR AVANT alignement ────────────────────
-        // Nécessaire pour VRSpawnRotation (mapper direction physique VR → +X virtuel).
+        // ── Capturer le yaw VR avant alignement ───────────────────────────────
         float vrYaw = vrTarget.eulerAngles.y;
+        Vector3 vrPosition = vrTarget.position;
 
-        // ── Étape 3 : aligner le XR Origin AR sur la caméra VR ───────────────
+        // ── Aligner le XR Origin AR sur la caméra VR ─────────────────────────
         AlignerARSurVR(arCam, vrTarget);
 
-        // ── Étape 4 : activer le tracking physique continu ───────────────────
-        // Capturé POST-alignement → dans le système de coordonnées calibré.
-        _arPhysPosAtCalib   = arCam.transform.position;
-        _camLocalPosAtCalib = arCam.transform.localPosition;
-        _xrOriginRotAtCalib = _arXROrigin.rotation;
-        _trackingActive     = true;
+        // ── Activer le tracking physique continu ──────────────────────────────
+        _trackingActive = true;
 
-        // ── Étape 5 : sauvegarder la calibration ─────────────────────────────
-        // vrYaw + xrOriginRot + camLocalPos + arCamYaw suffisent.
-        // Le déplacement AR (Vector3.zero au départ) et la rotation AR seront mis à jour
-        // chaque frame dans MettreAJourOffsetPhysique via UpdateAR.
-        // arCamYaw POST-alignement = référence de rotation pour calculer le delta
-        // de rotation physique AR entre la calibration et le spawn dans TempleScene.
-        CalibrationPersistence.SaveCalibration(
-            vrYaw,
-            _xrOriginRotAtCalib,
-            arCam.transform.localPosition,
-            arCam.transform.eulerAngles.y   // ← yaw caméra AR post-alignement
-        );
+        float   arYaw      = arCam.transform.eulerAngles.y;
+        Vector3 arPosition = arCam.transform.position;
 
-        // ── Sync réseau → VR ─────────────────────────────────────────────────
-        // CalibrationPersistence.SaveCalibration() vient d'être appelé sur ce device (AR).
-        // Sur le device VR, HasData reste false sans sync réseau → TempleSceneManager
-        // ne peut pas positionner les deux joueurs ni orienter le gameboard.
-        // On utilise le NetworkBehaviour de _remoteVRPlayer pour diffuser via RPC.
+        // ── Sauvegarder la calibration ────────────────────────────────────────
+        CalibrationPersistence.SaveCalibration(vrYaw, vrPosition, arYaw, arPosition);
+
+        // ── Sync réseau → tous les clients ────────────────────────────────────
         if (_remoteVRPlayer != null)
-            _remoteVRPlayer.SyncCalibrationToAll(
-                vrYaw,
-                _xrOriginRotAtCalib,
-                arCam.transform.localPosition,
-                arCam.transform.eulerAngles.y
-            );
+            _remoteVRPlayer.SyncCalibrationToAll(vrYaw, vrPosition, arYaw, arPosition);
         else
             Debug.LogWarning("[ARProximityCalibration] _remoteVRPlayer null — " +
-                             "calibration NON synchronisée vers VR (HasData restera false sur VR).");
+                             "calibration NON synchronisée vers VR.");
 
         IsCalibrated = true;
         AfficherFeedback("✓ Calibration réussie !");
@@ -353,28 +603,29 @@ public class ARProximityCalibration : MonoBehaviour
             _lancerJeuPanel.SetActive(true);
 
         Debug.Log($"[ARProximityCalibration] ✓ Calibration OK — " +
-                  $"VR yaw={vrYaw:F1}°  AR origin rot={_xrOriginRotAtCalib.eulerAngles:F1}°  " +
-                  $"AR cam yaw={arCam.transform.eulerAngles.y:F1}°");
+                  $"vrYaw={vrYaw:F1}°  vrPos={vrPosition:F3}  " +
+                  $"arYaw={arYaw:F1}°  arPos={arPosition:F3}");
     }
 
-    // ── Vue aérienne (appelée par le bouton "Lancer le jeu") ──────────────────
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  CALIBRATION — Bouton "Lancer le jeu"
+    // ═══════════════════════════════════════════════════════════════════════════
 
     /// <summary>
-    /// Téléporte le joueur AR en vue aérienne au-dessus du centre exact de la map.
-    ///
-    /// Dimensions map : X [-216, +282] largeur=498u  |  Z [-156, +344] profondeur=500u
-    /// Centre          : X = (-216+282)/2 = 33        |  Z = (-156+344)/2 = 94
-    /// Scale           : _mapScale (défaut 0.01) → 500u = 5 m perçus
+    /// Téléporte le joueur AR en vue aérienne, fige la position finale,
+    /// puis demande à TOUS les clients de jouer la vidéo d'intro.
+    /// Le jeu démarre réellement à la fin de la vidéo (OnIntroVideoFinished).
     ///
     /// ORDRE STRICT (important) :
-    ///   1. Désactiver CharacterController si présent (évite conflits de déplacement).
-    ///   2. Appliquer le scale sur _arXROrigin EN PREMIER — avant tout calcul de position.
-    ///      Après scale, l'offset entre _arXROrigin et Camera.main est lui aussi scalé.
-    ///   3. Lire l'offset post-scale : offsetCamToOrigin = _arXROrigin.pos - Camera.main.pos
-    ///      Positionner : _arXROrigin.pos = (33, _aerialHeight, 94) + offsetCamToOrigin
-    ///   4. Cacher _lancerJeuPanel.
-    ///   5. Réactiver CharacterController.
-    ///   6. Logger la position finale.
+    ///   0. Figer et synchroniser la position AR finale.
+    ///   1. Désactiver CharacterController.
+    ///   2. Appliquer le scale sur _arXROrigin EN PREMIER.
+    ///   3. Positionner pour centrer la caméra au-dessus du centre de la map.
+    ///   4. Activer le remapping continu physique → virtuel.
+    ///   5. Cacher _lancerJeuPanel.
+    ///   6. Réactiver CharacterController.
+    ///   7. Synchroniser VR Origin.
+    ///   8. Lancer la vidéo d'intro sur tous les clients (NEW).
     /// </summary>
     public void OnLancerJeuButtonPressed()
     {
@@ -391,55 +642,45 @@ public class ARProximityCalibration : MonoBehaviour
             return;
         }
 
-        // ── 0. Figer et synchroniser la position AR finale vers tous les devices ─
-        // Fait ICI, avant que la vue aérienne ne déplace le XR Origin et que
-        // CalibrationPersistence.UpdateAR ne soit plus appelé (fin de MettreAJourOffsetPhysique).
-        // Sur VR, _arPhysicalDisplacement = Vector3.zero (UpdateAR n'est jamais appelé) →
-        // sans ce sync, VR placerait AR à 10 cm et orienterait mal le gameboard.
+        // ── 0. Figer et synchroniser la position AR finale ────────────────────
         {
-            Camera arCamFinal = Camera.main;
-            if (arCamFinal != null)
-                MettreAJourOffsetPhysique(arCamFinal);   // garantit la valeur la plus fraîche
+            MettreAJourOffsetPhysique(arCam);
 
-            Vector3    finalPos = CalibrationPersistence.ARSpawnPositionDirect;
-            Quaternion finalRot = CalibrationPersistence.ARSpawnRotationDirect;
-            CalibrationPersistence.SaveFinalARSpawn(finalPos, finalRot);
+            // Sauvegarder la position PHYSIQUE du XR Origin avant sa téléportation
+            // en vue aérienne (steps 2-3). Après ça, arCam.transform.position sera
+            // virtuel (~75 unités) mais arCam.localPosition reste physique.
+            // MettreAJourOffsetPhysique utilisera _physicalXROriginPos pour
+            // reconstruire la vraie position monde physique pendant la vue aérienne.
+            _physicalXROriginPos = _arXROrigin.position;
+            // Le tracking continue — le joueur AR se déplace physiquement pendant
+            // la vue aérienne et sa position physique réelle doit rester à jour.
+
+            float   finalArYaw = CalibrationPersistence.ArYaw;
+            Vector3 finalArPos = CalibrationPersistence.ArPhysicalPosition;
 
             if (_remoteVRPlayer != null)
-                _remoteVRPlayer.SyncFinalARSpawnToAll(finalPos, finalRot);
+                _remoteVRPlayer.SyncFinalARSpawnToAll(finalArYaw, finalArPos);
             else
                 Debug.LogWarning("[ARProximityCalibration] _remoteVRPlayer null — " +
-                                 "FinalARSpawn NON synchronisé vers VR (gameboard sera mal orienté).");
+                                 "FinalARSpawn NON synchronisé vers VR.");
 
-            Debug.Log($"[ARProximityCalibration] FinalARSpawn envoyé — pos={finalPos:F3} | rot={finalRot.eulerAngles:F1}°");
+            Debug.Log($"[ARProximityCalibration] FinalARSpawn figé — arYaw={finalArYaw:F1}°  arPos={finalArPos:F3}");
         }
 
-        // ── 1. Désactiver CharacterController avant tout mouvement ───────────
+        // ── 1. Désactiver CharacterController ────────────────────────────────
         CharacterController cc = _arXROrigin.GetComponentInChildren<CharacterController>();
         if (cc != null) cc.enabled = false;
 
-        // ── 2. Appliquer le scale (EN PREMIER — avant tout calcul de position) ─
-        // Après scale, l'offset entre _arXROrigin et Camera.main est scalé.
+        // ── 2. Appliquer le scale ─────────────────────────────────────────────
         _arXROrigin.localScale = Vector3.one * _mapScale;
 
-        // ── 3. Positionner pour centrer la caméra au-dessus du centre de la map ─
-        // On lit l'offset POST-scale (il a changé car localScale modifie les positions enfants).
-        // Vector3 offsetCamToOrigin = _arXROrigin.position - arCam.transform.position;
+        // ── 3. Centrer la caméra au-dessus du centre de la map ───────────────
         _arXROrigin.position = new Vector3(33f, _aerialHeight, 94f);
 
-        // ── 4. Activer le remapping continu physique → virtuel ───────────────
-        // Chaque mètre physique parcouru = _remapFactor unités virtuelles.
-        // La demi-map fait ~250 unités ; la zone de jeu physique = _physicalPlayRadius.
-        // Facteur = 250 / 2.5 = 100 par défaut (5 m phys couvrent 500 unités virtuelles).
+        // ── 4. Activer le remapping continu ───────────────────────────────────
         _remapFactor      = 250f / Mathf.Max(0.1f, _physicalPlayRadius);
-
-        // Capturer la localPosition ARCore au moment du lancement.
-        // Update() n'utilisera que le DELTA depuis ce point → joueur centré en (33,aerial,94)
-        // même s'il s'est déplacé physiquement avant de cliquer sur "Lancer le jeu".
         _camLocalAtLaunch = arCam.transform.localPosition;
         _aerialViewActive = true;
-
-        Debug.Log($"[ARProximityCalibration] camLocalAtLaunch={_camLocalAtLaunch:F3} (référence vue aérienne).");
 
         // ── 5. Cacher le bouton ───────────────────────────────────────────────
         if (_lancerJeuPanel != null)
@@ -448,119 +689,119 @@ public class ARProximityCalibration : MonoBehaviour
         // ── 6. Réactiver CharacterController ─────────────────────────────────
         if (cc != null) cc.enabled = true;
 
-        // ── 7. Log ────────────────────────────────────────────────────────────
-        Debug.Log($"[ARProximityCalibration] 🌍 Vue aérienne — " +
-                  $"scale={_arXROrigin.localScale.x:F4}  " +
-                  $"remapFactor={_remapFactor:F1}  " +
-                  $"physRadius={_physicalPlayRadius:F1}m  " +
-                  $"(Update() repositionne l'origine chaque frame)");
-        _vrXROrigin.position = new Vector3(0, 0, 0); // aligner VR sur centre map aussi
-        _vrXROrigin.rotation = Quaternion.Euler(0, 0, 0);
-        // ── Message début de jeu ──────────────────────────────────────────────
-        // Activation directe via la référence Inspector (fonctionne en éditeur
-        // où AR et VR sont sur la même machine, et sur device si la scène est partagée).
-        if (_vrStartGameMessage != null)
+        // ── 7. Aligner l'Origin VR sur le centre de la map ───────────────────
+        if (_vrXROrigin != null)
         {
-            _vrStartGameMessage.SetActive(true);
-            StartCoroutine(CacherStartGameMessage(5f));
-            Debug.Log("[ARProximityCalibration] ✓ StartGameMessage activé directement.");
+            _vrXROrigin.position = Vector3.zero;
+            _vrXROrigin.rotation = Quaternion.identity;
         }
+
+        Debug.Log($"[ARProximityCalibration] 🌍 Vue aérienne — " +
+                  $"scale={_arXROrigin.localScale.x:F4}  remapFactor={_remapFactor:F1}  " +
+                  $"physRadius={_physicalPlayRadius:F1}m");
+
+        // ── 8. Lancer la vidéo d'intro sur TOUS les clients ───────────────────
+        // La vidéo démarre immédiatement sur AR et VR.
+        // OnIntroVideoFinished() est appelé localement sur chaque client à la fin.
+        RequestLaunchIntroVideo();
     }
 
-    // ── Mathématique d'alignement ─────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  MATHÉMATIQUE D'ALIGNEMENT
+    // ═══════════════════════════════════════════════════════════════════════════
 
     /// <summary>
-    /// Repositionne et réoriente le RIG AR (_arXROrigin) pour placer le joueur AR
-    /// juste devant le joueur VR, face à lui.
-    ///
-    /// On déplace directement le XR Origin (le rig), pas la caméra.
-    /// La caméra AR est un enfant du rig et suit naturellement.
+    /// Repositionne et réoriente le RIG AR pour placer le joueur AR
+    /// juste devant le joueur VR, face à lui (face-à-face).
     ///
     /// ORDRE : rotation AVANT translation.
-    ///   La rotation pivote autour du XR Origin. En la faisant en premier,
-    ///   le rig est déjà orienté correctement quand on lui assigne sa position finale.
-    ///
-    /// OFFSET 10 CM :
-    ///   Le rig AR est placé à 10 cm dans la direction de regard du joueur VR,
-    ///   pour qu'ils apparaissent face à face sans se superposer.
+    /// OFFSET : 10 cm dans la direction de regard du joueur VR.
     /// </summary>
-    /// <param name="vrTarget">PlayerSetup du joueur VR distant (non-owner).
-    /// Sa position XZ et son yaw définissent la cible de placement du rig AR.</param>
     private void AlignerARSurVR(Camera arCam, Transform vrTarget)
     {
         // ── Étape 1 : aligner le yaw pour placement FACE À FACE ─────────────
-        // OBJECTIF : après calibration, le joueur AR doit FAIRE FACE au joueur VR.
-        //
-        // ERREUR CLASSIQUE : cibler vrYaw fait que les deux joueurs regardent dans
-        // la MÊME direction après calibration. Conséquence : quand le joueur AR recule
-        // physiquement (loin du casque), le XR Origin tourné inverse le Z → AR se retrouve
-        // DERRIÈRE le joueur VR au lieu d'être devant. C'est le bug "loin du joueur VR".
-        //
-        // CORRECT : cibler vrYaw + 180° pour que le joueur AR fasse face au joueur VR.
-        // Exemple : VR face nord (0°), AR face sud (180°) → cible = 0°+180° = 180°
-        //           deltYaw = DeltaAngle(180°, 180°) = 0° → pas de rotation
-        //           XR Origin reste aligné avec le monde physique → physique nord = virtuel nord ✓
-        //           Le joueur AR recule physiquement (nord) → avance virtuellement (nord) = devant VR ✓
         float arYaw   = arCam.transform.eulerAngles.y;
         float vrYaw   = vrTarget.eulerAngles.y;
-        float deltYaw = Mathf.DeltaAngle(arYaw, vrYaw + 180f);  // Face à face : AR regarde VERS VR
-
+        float deltYaw = Mathf.DeltaAngle(arYaw, vrYaw + 180f);
         _arXROrigin.Rotate(0f, deltYaw, 0f, Space.World);
 
-        // ── Étape 2 : positionner le RIG AR de sorte que la CAMÉRA soit à 10 cm devant VR ──
-        // BUG PRÉCÉDENT : on plaçait le XR Origin à vrPos+10cm en supposant camLocalPos=(0,0,0).
-        // En réalité, ARCore a accumulé un tracking depuis le début de session →
-        // arCam.localPosition ≠ (0,0,0). Placer le rig sans compenser donne :
-        //   camera_world = (vrPos+10cm) + XROriginRot * camLocalPos   ← décalé !
-        // Ce décalage se propage dans ARSpawnPositionDirect (terme manquant = XROriginRot*camLocal)
-        // et génère une erreur angulaire sur le gameboard (ex : 144° au lieu de 180°).
-        //
-        // CORRECTION : on cherche XROrigin.pos tel que camera_world = desiredCamPos.
-        //   camera_world  = XROrigin.pos + XROrigin.rot * camLocalPos
-        //   → XROrigin.pos = desiredCamPos - XROrigin.rot * camLocalPos
-        //
-        // Remarque : on n'annule que les composantes XZ (on préserve le Y du rig = niveau sol).
-        //            XROrigin.rotation est DÉJÀ mis à jour par l'étape 1.
+        // ── Étape 2 : positionner le RIG en compensant localPos ARCore ───────
         Vector3 vrPos       = vrTarget.position;
         Vector3 vrForwardXZ = Quaternion.Euler(0f, vrYaw, 0f) * Vector3.forward;
-        const float offsetDevant = 0.1f; // 10 cm devant le joueur VR
+        const float offsetDevant = 0.1f;
 
-        // Position monde souhaitée pour la CAMÉRA (XZ uniquement)
         Vector3 desiredCamXZ = new Vector3(
             vrPos.x + vrForwardXZ.x * offsetDevant,
-            _arXROrigin.position.y,          // Y du rig conservé (niveau sol)
+            _arXROrigin.position.y,
             vrPos.z + vrForwardXZ.z * offsetDevant
         );
 
-        // Compense la localPosition ARCore de la caméra (XZ seulement, le Y ne touche pas le plan jeu)
-        Vector3 camLocalFlat = new Vector3(arCam.transform.localPosition.x, 0f, arCam.transform.localPosition.z);
-        Vector3 camWorldOffsetXZ = _arXROrigin.rotation * camLocalFlat;  // local → monde (rotation de l'étape 1)
+        Vector3 camLocalFlat    = new Vector3(arCam.transform.localPosition.x, 0f, arCam.transform.localPosition.z);
+        Vector3 camWorldOffsetXZ = _arXROrigin.rotation * camLocalFlat;
 
         _arXROrigin.position = new Vector3(
             desiredCamXZ.x - camWorldOffsetXZ.x,
-            desiredCamXZ.y,                          // Y inchangé
+            desiredCamXZ.y,
             desiredCamXZ.z - camWorldOffsetXZ.z
         );
 
         Debug.Log($"[ARProximityCalibration] AlignerARSurVR — " +
                   $"vrPos={vrPos:F3}  vrYaw={vrYaw:F1}°  " +
                   $"camLocalFlat={camLocalFlat:F3}  camWorldOffset={camWorldOffsetXZ:F3}  " +
-                  $"rig AR → {_arXROrigin.position:F3}  cam world≈{desiredCamXZ:F3} ({offsetDevant*100:F0} cm devant VR)");
+                  $"rig AR → {_arXROrigin.position:F3}  cam≈{desiredCamXZ:F3} (10 cm devant VR)");
     }
 
-    // ── Feedback UI ───────────────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  TRACKING PHYSIQUE
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    private void MettreAJourOffsetPhysique(Camera arCam)
+    {
+        if (CalibrationPersistence.Instance == null) return;
+
+        Vector3 physicalPos;
+
+        if (_aerialViewActive)
+        {
+            // En vue aérienne, arCam.transform.position est virtuel (XR Origin à 75 unités).
+            // On reconstruit la position physique monde :
+            //   pos_physique = _physicalXROriginPos + XROriginRot * cam.localPosition
+            // XROriginRot ne change pas depuis la calibration (seule la position change).
+            Vector3 localPos = arCam.transform.localPosition;
+            localPos.y = 0f;
+            physicalPos = _physicalXROriginPos + _arXROrigin.rotation * localPos;
+        }
+        else
+        {
+            physicalPos = arCam.transform.position;
+            physicalPos.y = 0f;
+        }
+
+        CalibrationPersistence.UpdateAR(arCam.transform.eulerAngles.y, physicalPos);
+    }
+
+    private PlayerSetup TrouverJoueurVRDistant()
+    {
+        foreach (var ps in FindObjectsByType<PlayerSetup>(FindObjectsSortMode.None))
+        {
+            if (!ps.IsOwner)
+                return ps;
+        }
+        return null;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  FEEDBACK UI
+    // ═══════════════════════════════════════════════════════════════════════════
 
     private void AfficherFeedback(string message)
     {
         if (_feedbackText != null)
             _feedbackText.text = message;
-
         if (_feedbackPanel != null)
             _feedbackPanel.SetActive(true);
-
         if (_feedbackRoutine != null)
             StopCoroutine(_feedbackRoutine);
-
         _feedbackRoutine = StartCoroutine(MasquerFeedback(_feedbackDuration));
     }
 
@@ -578,18 +819,16 @@ public class ARProximityCalibration : MonoBehaviour
             _vrStartGameMessage.SetActive(false);
     }
 
-    // ── Création automatique de l'UI ─────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  CRÉATION AUTOMATIQUE — UI CALIBRATION
+    // ═══════════════════════════════════════════════════════════════════════════
 
     /// <summary>
     /// Crée une UI Screen Space Overlay minimale si _buttonPanel n'est pas assigné en Inspector.
     /// Panels créés :
     ///   • CalibrationButtonPanel  — top-right, toujours visible.
-    ///   • CalibrationFeedbackPanel — top-center, caché par défaut, affiché après calibration.
-    ///   • LancerJeuPanel          — centre écran, caché par défaut,
-    ///                               affiché uniquement après calibration réussie.
-    ///
-    /// Positions descendues à -80 (vs -24 précédemment) pour rester visible
-    /// sous la barre d'état système des téléphones AR.
+    ///   • CalibrationFeedbackPanel — top-center, caché par défaut.
+    ///   • LancerJeuPanel          — centre écran, caché par défaut.
     /// </summary>
     private void CreerUIAutomatique()
     {
@@ -603,11 +842,9 @@ public class ARProximityCalibration : MonoBehaviour
         scaler.uiScaleMode         = CanvasScaler.ScaleMode.ScaleWithScreenSize;
         scaler.referenceResolution = new Vector2(1080, 1920);
         scaler.matchWidthOrHeight  = 0.5f;
-
         canvasGO.AddComponent<GraphicRaycaster>();
 
         // ── Panel bouton Calibration (top-right) ──────────────────────────────
-        // anchoredPosition.y = -80 (descendu vs -24) pour éviter la coupure en haut.
         GameObject panelGO = new GameObject("CalibrationButtonPanel");
         panelGO.transform.SetParent(canvasGO.transform, false);
 
@@ -625,13 +862,13 @@ public class ARProximityCalibration : MonoBehaviour
         GameObject btnGO  = new GameObject("CalibrationButton");
         btnGO.transform.SetParent(panelGO.transform, false);
 
-        Image btnImg      = btnGO.AddComponent<Image>();
-        btnImg.color      = new Color(0.08f, 0.55f, 1f, 0.92f);
+        Image btnImg  = btnGO.AddComponent<Image>();
+        btnImg.color  = new Color(0.08f, 0.55f, 1f, 0.92f);
 
         RectTransform btnRT = btnGO.GetComponent<RectTransform>();
         btnRT.anchorMin     = Vector2.zero;
         btnRT.anchorMax     = Vector2.one;
-        btnRT.offsetMin     = new Vector2(8f,  8f);
+        btnRT.offsetMin     = new Vector2(8f, 8f);
         btnRT.offsetMax     = new Vector2(-8f, -8f);
 
         Button btn        = btnGO.AddComponent<Button>();
@@ -641,36 +878,34 @@ public class ARProximityCalibration : MonoBehaviour
         cb.highlightedColor = new Color(0.2f, 0.7f, 1f, 1f);
         cb.pressedColor     = new Color(0.05f, 0.35f, 0.8f, 1f);
         btn.colors          = cb;
-
         btn.onClick.AddListener(OnCalibrationButtonPressed);
 
         GameObject lblGO = new GameObject("Label");
         lblGO.transform.SetParent(btnGO.transform, false);
 
         TextMeshProUGUI lbl = lblGO.AddComponent<TextMeshProUGUI>();
-        lbl.text            = "⊕  Calibration";
-        lbl.fontSize        = 28f;
-        lbl.fontStyle       = FontStyles.Bold;
-        lbl.alignment       = TextAlignmentOptions.Center;
-        lbl.color           = Color.white;
+        lbl.text      = "⊕  Calibration";
+        lbl.fontSize  = 28f;
+        lbl.fontStyle = FontStyles.Bold;
+        lbl.alignment = TextAlignmentOptions.Center;
+        lbl.color     = Color.white;
 
         RectTransform lblRT = lbl.GetComponent<RectTransform>();
-        lblRT.anchorMin     = Vector2.zero;
-        lblRT.anchorMax     = Vector2.one;
-        lblRT.offsetMin     = Vector2.zero;
-        lblRT.offsetMax     = Vector2.zero;
+        lblRT.anchorMin = Vector2.zero;
+        lblRT.anchorMax = Vector2.one;
+        lblRT.offsetMin = Vector2.zero;
+        lblRT.offsetMax = Vector2.zero;
 
         _buttonPanel = panelGO;
 
         // ── Panel feedback (top-center) ───────────────────────────────────────
-        // anchoredPosition.y = -80 (descendu vs -24) pour rester visible.
         GameObject fbGO = new GameObject("CalibrationFeedbackPanel");
         fbGO.transform.SetParent(canvasGO.transform, false);
         fbGO.SetActive(false);
 
-        Image fbImg           = fbGO.AddComponent<Image>();
-        fbImg.color           = new Color(0.06f, 0.55f, 0.22f, 0.88f);
-        fbImg.raycastTarget   = false;
+        Image fbImg         = fbGO.AddComponent<Image>();
+        fbImg.color         = new Color(0.06f, 0.55f, 0.22f, 0.88f);
+        fbImg.raycastTarget = false;
 
         RectTransform fbRT    = fbGO.GetComponent<RectTransform>();
         fbRT.anchorMin        = new Vector2(0.5f, 1f);
@@ -683,24 +918,22 @@ public class ARProximityCalibration : MonoBehaviour
         ftGO.transform.SetParent(fbGO.transform, false);
 
         TextMeshProUGUI ft = ftGO.AddComponent<TextMeshProUGUI>();
-        ft.text            = "✓ Calibration réussie !";
-        ft.fontSize        = 26f;
-        ft.alignment       = TextAlignmentOptions.Center;
-        ft.color           = Color.white;
-        ft.raycastTarget   = false;
+        ft.text        = "✓ Calibration réussie !";
+        ft.fontSize    = 26f;
+        ft.alignment   = TextAlignmentOptions.Center;
+        ft.color       = Color.white;
+        ft.raycastTarget = false;
 
         RectTransform ftRT = ft.GetComponent<RectTransform>();
-        ftRT.anchorMin     = Vector2.zero;
-        ftRT.anchorMax     = Vector2.one;
-        ftRT.offsetMin     = new Vector2(12f, 4f);
-        ftRT.offsetMax     = new Vector2(-12f, -4f);
+        ftRT.anchorMin = Vector2.zero;
+        ftRT.anchorMax = Vector2.one;
+        ftRT.offsetMin = new Vector2(12f, 4f);
+        ftRT.offsetMax = new Vector2(-12f, -4f);
 
         _feedbackPanel = fbGO;
         _feedbackText  = ft;
 
         // ── Panel "Lancer le jeu" (centre écran, caché par défaut) ───────────
-        // Visible uniquement après calibration réussie (OnCalibrationButtonPressed).
-        // Couleur orange/or — visuellement distinct du bouton Calibration (bleu).
         GameObject ljGO = new GameObject("LancerJeuPanel");
         ljGO.transform.SetParent(canvasGO.transform, false);
         ljGO.SetActive(false);
@@ -719,8 +952,8 @@ public class ARProximityCalibration : MonoBehaviour
         GameObject ljBtnGO  = new GameObject("LancerJeuButton");
         ljBtnGO.transform.SetParent(ljGO.transform, false);
 
-        Image ljBtnImg      = ljBtnGO.AddComponent<Image>();
-        ljBtnImg.color      = new Color(0.95f, 0.60f, 0.05f, 0.95f);
+        Image ljBtnImg  = ljBtnGO.AddComponent<Image>();
+        ljBtnImg.color  = new Color(0.95f, 0.60f, 0.05f, 0.95f);
 
         RectTransform ljBtnRT = ljBtnGO.GetComponent<RectTransform>();
         ljBtnRT.anchorMin     = Vector2.zero;
@@ -735,28 +968,41 @@ public class ARProximityCalibration : MonoBehaviour
         ljCb.highlightedColor = new Color(1f, 0.75f, 0.20f, 1f);
         ljCb.pressedColor     = new Color(0.75f, 0.42f, 0.02f, 1f);
         ljBtn.colors          = ljCb;
-
         ljBtn.onClick.AddListener(OnLancerJeuButtonPressed);
 
         GameObject ljLblGO = new GameObject("Label");
         ljLblGO.transform.SetParent(ljBtnGO.transform, false);
 
         TextMeshProUGUI ljLbl = ljLblGO.AddComponent<TextMeshProUGUI>();
-        ljLbl.text            = "🌍  Lancer le jeu";
-        ljLbl.fontSize        = 34f;
-        ljLbl.fontStyle       = FontStyles.Bold;
-        ljLbl.alignment       = TextAlignmentOptions.Center;
-        ljLbl.color           = Color.white;
+        ljLbl.text      = "🌍  Lancer le jeu";
+        ljLbl.fontSize  = 34f;
+        ljLbl.fontStyle = FontStyles.Bold;
+        ljLbl.alignment = TextAlignmentOptions.Center;
+        ljLbl.color     = Color.white;
 
         RectTransform ljLblRT = ljLbl.GetComponent<RectTransform>();
-        ljLblRT.anchorMin     = Vector2.zero;
-        ljLblRT.anchorMax     = Vector2.one;
-        ljLblRT.offsetMin     = Vector2.zero;
-        ljLblRT.offsetMax     = Vector2.zero;
+        ljLblRT.anchorMin = Vector2.zero;
+        ljLblRT.anchorMax = Vector2.one;
+        ljLblRT.offsetMin = Vector2.zero;
+        ljLblRT.offsetMax = Vector2.zero;
 
         _lancerJeuPanel = ljGO;
 
         Debug.Log("[ARProximityCalibration] UI créée automatiquement " +
                   "(CalibrationButton + FeedbackPanel + LancerJeuPanel).");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  CLEANUP
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    private void OnDestroy()
+    {
+        // Libérer la RenderTexture GPU proprement
+        if (_renderTexture != null)
+        {
+            _renderTexture.Release();
+            Destroy(_renderTexture);
+        }
     }
 }

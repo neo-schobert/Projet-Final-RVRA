@@ -262,21 +262,25 @@ public class MissileMovement : NetworkBehaviour
     // ── Dégâts + Despawn : owner (AR) uniquement ─────────────────────────────
     private IEnumerator DespawnApresExplosion()
     {
-        // Dégâts en zone
+        // ── DIAGNOSTIC ───────────────────────────────────────────────────────
         Collider[] hits = Physics.OverlapSphere(transform.position, _explosionRadius);
+        Debug.Log($"[MissileMovement] OverlapSphere centre={transform.position:F2} " +
+                  $"rayon={_explosionRadius}  → {hits.Length} collider(s) trouvé(s)");
+
         foreach (var hit in hits)
         {
-            // GetComponentInParent : PlayerHealth est sur le ROOT du prefab joueur,
-            // pas forcément sur le GameObject qui porte le collider (peut être un enfant).
-            // GetComponent() seul retournerait null → 0 dégâts même si le joueur est touché.
             var health = hit.GetComponentInParent<PlayerHealth>();
+            Debug.Log($"[MissileMovement]   collider: '{hit.gameObject.name}' " +
+                      $"(layer={LayerMask.LayerToName(hit.gameObject.layer)}) " +
+                      $"PlayerHealth={health != null}");
+
             if (health == null) continue;
 
             float distance = Vector3.Distance(transform.position, hit.transform.position);
             float falloff  = 1f - Mathf.Clamp01(distance / _explosionRadius);
             float damage   = _explosionDamage * falloff;
 
-            Debug.Log($"[MissileMovement] Dégâts : {hit.gameObject.name} → {damage:F1} dmg " +
+            Debug.Log($"[MissileMovement] ✓ Dégâts : {hit.gameObject.name} → {damage:F1} dmg " +
                       $"(distance={distance:F1}m, falloff={falloff:F2})");
             health.TakeDamage(damage);
         }

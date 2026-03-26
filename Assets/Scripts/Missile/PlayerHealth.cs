@@ -8,17 +8,25 @@ public class PlayerHealth : NetworkBehaviour
 
     public event System.Action<float> OnHealthChangedEvent;
 
+    // FIX : En DA il n'y a pas de serveur. Le joueur est propriétaire de sa propre santé.
     private NetworkVariable<float> _currentHealth = new NetworkVariable<float>(
         0f,
         NetworkVariableReadPermission.Everyone,
-        NetworkVariableWritePermission.Server
+        NetworkVariableWritePermission.Owner
     );
 
     public override void OnNetworkSpawn()
     {
-        _currentHealth.Value = maxHealth;
-
+        // Souscrire D'ABORD, PUIS écrire la valeur initiale.
+        // Raison : en NGO, NetworkVariable.OnValueChanged se déclenche LOCALEMENT
+        // dès que l'owner écrit. Si on souscrit après, l'owner rate l'événement initial.
         _currentHealth.OnValueChanged += OnHealthChanged;
+
+        if (IsOwner)
+        {
+            _currentHealth.Value = maxHealth;  // déclenche OnHealthChanged correctement
+            Debug.Log($"[PlayerHealth] {gameObject.name} initialisé à {maxHealth} PV.");
+        }
     }
 
     public override void OnNetworkDespawn()
@@ -31,10 +39,20 @@ public class PlayerHealth : NetworkBehaviour
         OnHealthChangedEvent?.Invoke(newVal);
     }
 
+    // TakeDamage peut être appelé par n'importe quel client (ex : AR depuis l'explosion).
+    // On envoie un RPC à l'OWNER du joueur pour qu'il applique les dégâts sur sa NetworkVariable.
+    //
+    // OBLIGATOIRE : InvokePermission.Everyone
+    // Sans ça, en DA le RPC envoyé par un NON-owner est silencieusement ignoré par NGO.
+    // (même bug que SyncCalibrationRpc dans PlayerSetup — la règle est identique)
     public void TakeDamage(float damage)
     {
-        if (!IsServer) return;
+        ApplyDamageRpc(damage);
+    }
 
+    [Rpc(SendTo.Owner, InvokePermission = RpcInvokePermission.Everyone)]
+    private void ApplyDamageRpc(float damage)
+    {
         _currentHealth.Value = Mathf.Max(0f, _currentHealth.Value - damage);
 
         if (_currentHealth.Value <= 0f)

@@ -121,6 +121,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PlayerSetup
   ShowTopMostFoldoutHeaderGroup: 1
+  _startGameMessage: {fileID: 0}
 --- !u!65 &819288729001016200
 BoxCollider:
   m_ObjectHideFlags: 0
@@ -157,10 +158,9 @@ MonoBehaviour:
   ShowTopMostFoldoutHeaderGroup: 1
   missilePrefab: {fileID: 7177012960636607378, guid: 79d82f01484ce1f428c9afc1c4b8e3c4, type: 3}
   arcHeight: 50
-  flightDuration: 3
+  flightDuration: 4.5
   explosionRadius: 10
   explosionDamage: 100
-  explosionVFX: {fileID: 7522982781472501662, guid: 0b787826601ecda4b8fe6c0c389f43a1, type: 3}
   mapLayer:
     serializedVersion: 2
     m_Bits: 128

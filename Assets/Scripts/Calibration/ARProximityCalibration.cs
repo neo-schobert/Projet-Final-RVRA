@@ -39,6 +39,9 @@ public class ARProximityCalibration : MonoBehaviour
     [Tooltip("Transform du XR Origin (PC VR). À assigner depuis l'Inspector.")]
     [SerializeField] private Transform _vrXROrigin;
 
+    [Tooltip("GameObject 'StartGameMessage' présent dans la scène. " +
+             "Glisse-le ici depuis l'Inspector — il sera activé directement quand 'Lancer le jeu' est pressé. " +
+             "Fonctionne en éditeur (les deux joueurs sur la même machine) ET sur device (même scène partagée).")]
     [SerializeField] private GameObject _vrStartGameMessage;
 
     [Tooltip("Transform de la caméra VR (enfant du XR Origin VR). " +
@@ -217,7 +220,7 @@ public class ARProximityCalibration : MonoBehaviour
 
     /// <summary>
     /// Recalcule la position physique AR dans l'espace virtuel calibré et met à jour
-    /// CalibrationPersistence.PhysicalOffset en silence (pas de log flood).
+    /// CalibrationPersistence en silence (pas de log flood).
     ///
     /// Pourquoi localPosition et pas Camera.main.position ?
     ///   En vue aérienne, Camera.main.position est remappée à ~75 m d'altitude.
@@ -225,7 +228,12 @@ public class ARProximityCalibration : MonoBehaviour
     ///   à Camera Offset (parent direct) — toujours en mètres physiques réels,
     ///   indépendante de la scale/position du XR Origin.
     ///
-    /// Formule :
+    /// Pourquoi arCam.transform.eulerAngles.y et pas _arXROrigin.rotation ?
+    ///   ARCore ne tourne pas le XR Origin quand le joueur pivote physiquement —
+    ///   seule la caméra (enfant de Camera Offset) tourne. On capture donc le yaw
+    ///   directement sur la caméra pour détecter les rotations post-calibration.
+    ///
+    /// Formule position :
     ///   AR_phys = _arPhysPosAtCalib + _xrOriginRotAtCalib × (localPos_now − localPos_calib)
     ///   VR_phys = PlayerSetup.transform.position (synchronisé réseau, = caméra VR monde)
     /// </summary>
@@ -233,12 +241,10 @@ public class ARProximityCalibration : MonoBehaviour
     {
         if (CalibrationPersistence.Instance == null) return;
 
-        // On utilise la position WORLD de la caméra AR (arCam.transform.position).
-        // AR n'a pas de locomotion virtuelle → cette position ne change que via
-        // le mouvement physique du joueur AR dans le monde réel.
-        // CalibrationPersistence calcule le delta vs la position au moment de la calibration
-        // et le transforme en coordonnées TempleScene.
-        CalibrationPersistence.UpdateARDisplacement(arCam.transform.localPosition);
+        CalibrationPersistence.UpdateAR(
+            arCam.transform.localPosition,
+            arCam.transform.eulerAngles.y   // yaw world caméra AR courant
+        );
     }
 
     // ── Calibration (appelée par le bouton onClick) ────────────────────────────
@@ -312,12 +318,33 @@ public class ARProximityCalibration : MonoBehaviour
         _trackingActive     = true;
 
         // ── Étape 5 : sauvegarder la calibration ─────────────────────────────
-        // vrYaw + arOriginRotation suffisent — plus besoin de la position VR.
-        // Le déplacement AR (Vector3.zero au départ) sera mis à jour chaque frame
-        // dans MettreAJourOffsetPhysique via UpdateARDisplacement.
-        // On passe la position world de la caméra AR POST-alignement = point de référence
-        // pour le calcul du déplacement physique AR dans MettreAJourOffsetPhysique.
-        CalibrationPersistence.SaveCalibration(vrYaw, _xrOriginRotAtCalib, arCam.transform.localPosition);
+        // vrYaw + xrOriginRot + camLocalPos + arCamYaw suffisent.
+        // Le déplacement AR (Vector3.zero au départ) et la rotation AR seront mis à jour
+        // chaque frame dans MettreAJourOffsetPhysique via UpdateAR.
+        // arCamYaw POST-alignement = référence de rotation pour calculer le delta
+        // de rotation physique AR entre la calibration et le spawn dans TempleScene.
+        CalibrationPersistence.SaveCalibration(
+            vrYaw,
+            _xrOriginRotAtCalib,
+            arCam.transform.localPosition,
+            arCam.transform.eulerAngles.y   // ← yaw caméra AR post-alignement
+        );
+
+        // ── Sync réseau → VR ─────────────────────────────────────────────────
+        // CalibrationPersistence.SaveCalibration() vient d'être appelé sur ce device (AR).
+        // Sur le device VR, HasData reste false sans sync réseau → TempleSceneManager
+        // ne peut pas positionner les deux joueurs ni orienter le gameboard.
+        // On utilise le NetworkBehaviour de _remoteVRPlayer pour diffuser via RPC.
+        if (_remoteVRPlayer != null)
+            _remoteVRPlayer.SyncCalibrationToAll(
+                vrYaw,
+                _xrOriginRotAtCalib,
+                arCam.transform.localPosition,
+                arCam.transform.eulerAngles.y
+            );
+        else
+            Debug.LogWarning("[ARProximityCalibration] _remoteVRPlayer null — " +
+                             "calibration NON synchronisée vers VR (HasData restera false sur VR).");
 
         IsCalibrated = true;
         AfficherFeedback("✓ Calibration réussie !");
@@ -326,7 +353,8 @@ public class ARProximityCalibration : MonoBehaviour
             _lancerJeuPanel.SetActive(true);
 
         Debug.Log($"[ARProximityCalibration] ✓ Calibration OK — " +
-                  $"VR yaw={vrYaw:F1}°  AR origin rot={_xrOriginRotAtCalib.eulerAngles:F1}°");
+                  $"VR yaw={vrYaw:F1}°  AR origin rot={_xrOriginRotAtCalib.eulerAngles:F1}°  " +
+                  $"AR cam yaw={arCam.transform.eulerAngles.y:F1}°");
     }
 
     // ── Vue aérienne (appelée par le bouton "Lancer le jeu") ──────────────────
@@ -361,6 +389,29 @@ public class ARProximityCalibration : MonoBehaviour
         {
             Debug.LogError("[ARProximityCalibration] OnLancerJeuButtonPressed : Camera.main est null !");
             return;
+        }
+
+        // ── 0. Figer et synchroniser la position AR finale vers tous les devices ─
+        // Fait ICI, avant que la vue aérienne ne déplace le XR Origin et que
+        // CalibrationPersistence.UpdateAR ne soit plus appelé (fin de MettreAJourOffsetPhysique).
+        // Sur VR, _arPhysicalDisplacement = Vector3.zero (UpdateAR n'est jamais appelé) →
+        // sans ce sync, VR placerait AR à 10 cm et orienterait mal le gameboard.
+        {
+            Camera arCamFinal = Camera.main;
+            if (arCamFinal != null)
+                MettreAJourOffsetPhysique(arCamFinal);   // garantit la valeur la plus fraîche
+
+            Vector3    finalPos = CalibrationPersistence.ARSpawnPositionDirect;
+            Quaternion finalRot = CalibrationPersistence.ARSpawnRotationDirect;
+            CalibrationPersistence.SaveFinalARSpawn(finalPos, finalRot);
+
+            if (_remoteVRPlayer != null)
+                _remoteVRPlayer.SyncFinalARSpawnToAll(finalPos, finalRot);
+            else
+                Debug.LogWarning("[ARProximityCalibration] _remoteVRPlayer null — " +
+                                 "FinalARSpawn NON synchronisé vers VR (gameboard sera mal orienté).");
+
+            Debug.Log($"[ARProximityCalibration] FinalARSpawn envoyé — pos={finalPos:F3} | rot={finalRot.eulerAngles:F1}°");
         }
 
         // ── 1. Désactiver CharacterController avant tout mouvement ───────────
@@ -404,17 +455,18 @@ public class ARProximityCalibration : MonoBehaviour
                   $"physRadius={_physicalPlayRadius:F1}m  " +
                   $"(Update() repositionne l'origine chaque frame)");
         _vrXROrigin.position = new Vector3(0, 0, 0); // aligner VR sur centre map aussi
-
-        _vrStartGameMessage.SetActive(true);
-        StartCoroutine(HideAfterDelay(_vrStartGameMessage, 5f));
+        _vrXROrigin.rotation = Quaternion.Euler(0, 0, 0);
+        // ── Message début de jeu ──────────────────────────────────────────────
+        // Activation directe via la référence Inspector (fonctionne en éditeur
+        // où AR et VR sont sur la même machine, et sur device si la scène est partagée).
+        if (_vrStartGameMessage != null)
+        {
+            _vrStartGameMessage.SetActive(true);
+            StartCoroutine(CacherStartGameMessage(5f));
+            Debug.Log("[ARProximityCalibration] ✓ StartGameMessage activé directement.");
+        }
     }
 
-
-    private IEnumerator HideAfterDelay(GameObject obj, float delay)
-    {
-        yield return new WaitForSeconds(delay);
-        obj.SetActive(false);
-    }
     // ── Mathématique d'alignement ─────────────────────────────────────────────
 
     /// <summary>
@@ -455,24 +507,47 @@ public class ARProximityCalibration : MonoBehaviour
 
         _arXROrigin.Rotate(0f, deltYaw, 0f, Space.World);
 
-        // ── Étape 2 : positionner le RIG AR (XR Origin) directement devant le joueur VR ──
-        // On place le XR Origin lui-même à 10 cm devant le joueur VR.
-        // La caméra AR suit en tant qu'enfant du rig — pas besoin de compenser son offset local.
+        // ── Étape 2 : positionner le RIG AR de sorte que la CAMÉRA soit à 10 cm devant VR ──
+        // BUG PRÉCÉDENT : on plaçait le XR Origin à vrPos+10cm en supposant camLocalPos=(0,0,0).
+        // En réalité, ARCore a accumulé un tracking depuis le début de session →
+        // arCam.localPosition ≠ (0,0,0). Placer le rig sans compenser donne :
+        //   camera_world = (vrPos+10cm) + XROriginRot * camLocalPos   ← décalé !
+        // Ce décalage se propage dans ARSpawnPositionDirect (terme manquant = XROriginRot*camLocal)
+        // et génère une erreur angulaire sur le gameboard (ex : 144° au lieu de 180°).
+        //
+        // CORRECTION : on cherche XROrigin.pos tel que camera_world = desiredCamPos.
+        //   camera_world  = XROrigin.pos + XROrigin.rot * camLocalPos
+        //   → XROrigin.pos = desiredCamPos - XROrigin.rot * camLocalPos
+        //
+        // Remarque : on n'annule que les composantes XZ (on préserve le Y du rig = niveau sol).
+        //            XROrigin.rotation est DÉJÀ mis à jour par l'étape 1.
         Vector3 vrPos       = vrTarget.position;
         Vector3 vrForwardXZ = Quaternion.Euler(0f, vrYaw, 0f) * Vector3.forward;
         const float offsetDevant = 0.1f; // 10 cm devant le joueur VR
 
-        _arXROrigin.position = new Vector3(
+        // Position monde souhaitée pour la CAMÉRA (XZ uniquement)
+        Vector3 desiredCamXZ = new Vector3(
             vrPos.x + vrForwardXZ.x * offsetDevant,
-            _arXROrigin.position.y,          // on conserve le Y courant du rig (niveau sol)
+            _arXROrigin.position.y,          // Y du rig conservé (niveau sol)
             vrPos.z + vrForwardXZ.z * offsetDevant
+        );
+
+        // Compense la localPosition ARCore de la caméra (XZ seulement, le Y ne touche pas le plan jeu)
+        Vector3 camLocalFlat = new Vector3(arCam.transform.localPosition.x, 0f, arCam.transform.localPosition.z);
+        Vector3 camWorldOffsetXZ = _arXROrigin.rotation * camLocalFlat;  // local → monde (rotation de l'étape 1)
+
+        _arXROrigin.position = new Vector3(
+            desiredCamXZ.x - camWorldOffsetXZ.x,
+            desiredCamXZ.y,                          // Y inchangé
+            desiredCamXZ.z - camWorldOffsetXZ.z
         );
 
         Debug.Log($"[ARProximityCalibration] AlignerARSurVR — " +
                   $"vrPos={vrPos:F3}  vrYaw={vrYaw:F1}°  " +
-                  $"rig AR → {_arXROrigin.position:F3} ({offsetDevant*100:F0} cm devant VR)");
+                  $"camLocalFlat={camLocalFlat:F3}  camWorldOffset={camWorldOffsetXZ:F3}  " +
+                  $"rig AR → {_arXROrigin.position:F3}  cam world≈{desiredCamXZ:F3} ({offsetDevant*100:F0} cm devant VR)");
     }
-    
+
     // ── Feedback UI ───────────────────────────────────────────────────────────
 
     private void AfficherFeedback(string message)
@@ -494,6 +569,13 @@ public class ARProximityCalibration : MonoBehaviour
         yield return new WaitForSeconds(delay);
         if (_feedbackPanel != null)
             _feedbackPanel.SetActive(false);
+    }
+
+    private IEnumerator CacherStartGameMessage(float delay)
+    {
+        yield return new WaitForSeconds(delay);
+        if (_vrStartGameMessage != null)
+            _vrStartGameMessage.SetActive(false);
     }
 
     // ── Création automatique de l'UI ─────────────────────────────────────────

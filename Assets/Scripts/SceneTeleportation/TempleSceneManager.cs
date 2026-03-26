@@ -33,30 +33,103 @@ public class TempleSceneManager : MonoBehaviour
     [Tooltip("XR Origin AR (Mobile AR) de TempleScene. Laissez vide pour auto-détection.")]
     [SerializeField] private Transform _arXROrigin;
 
+    [SerializeField] private Transform _gameboard;
+
+    [Tooltip("Décalage angulaire Y supplémentaire après l'alignement (degrés).\n" +
+             "Utilise 0  si l'axe de jeu du gameboard est son +X local.\n" +
+             "Utilise 90 si l'axe de jeu est son +Z local (forward Unity par défaut).")]
+    [SerializeField] private float _gameboardRotationOffset = 0f;
+
     // ─────────────────────────────────────────────────────────────────────────
 
     private void Start()
     {
-        // XRRigSwitcher.Awake() s'est déjà exécuté → IsVRMode est défini
-        // et le bon rig est actif. FindAnyObjectByType<XROrigin>() trouve donc le bon.
-
+        // XRRigSwitcher.Awake() s'est déjà exécuté → IsVRMode est défini,
+        // le bon rig est actif sur ce device.
         Debug.Log($"[TempleSceneManager] Démarrage — mode : {(XRRigSwitcher.IsVRMode ? "VR" : "AR")}");
 
-        PositionnerJoueur();
+        // ── 1. Positionner les DEUX XR Origins ───────────────────────────────
+        // Chaque device ne possède qu'un rig actif, mais les deux XR Origins
+        // existent dans la scène (l'autre est inactif).
+        // On les positionne tous les deux afin de lire leurs positions effectives
+        // pour calculer la direction VR→AR réelle après placement.
+        PositionnerVR();
+        PositionnerAR();
 
+        // ── 2. Désactiver locomotion (VR : tracking physique uniquement) ─────
         if (XRRigSwitcher.IsVRMode)
             DesactiverLocomotionVR();
+
+        // ── 3. Orienter le gameboard selon la direction VR→AR ────────────────
+        AlignGameboard();
+    }
+
+    /// <summary>
+    /// Aligne l'axe +X du gameboard sur la direction VR→AR dans l'espace TempleScene.
+    ///
+    /// CONVERSION OBLIGATOIRE physique → virtuel :
+    ///   SpawnARPosition est en espace physique monde (Scene.unity).
+    ///   Dans TempleScene, VR XR Origin a la rotation VRSpawnRotationDirect = Euler(0,vrYaw,0).
+    ///   Cette rotation mappe l'espace physique → espace virtuel TempleScene.
+    ///   Tout vecteur physique d doit être converti : d_virtuel = VRSpawnRotationDirect * d.
+    ///   Sans cette conversion, l'erreur angulaire = vrYaw (ex : 36° → gameboard à 144° au lieu de 180°).
+    ///
+    /// Calcul direct de l'angle :
+    ///   angle = SignedAngle(Vector3.right, toAR_virtuel, Vector3.up)
+    ///   gameboard.rotation = Euler(0, angle + offset, 0)
+    ///   → +X du gameboard pointe exactement vers AR dans l'espace virtuel.
+    /// </summary>
+    private void AlignGameboard()
+    {
+        if (_gameboard == null)
+        {
+            Debug.LogWarning("[TempleSceneManager] _gameboard non assigné dans l'Inspector — " +
+                             "gameboard non orienté.");
+            return;
+        }
+
+        if (!CalibrationPersistence.HasData)
+        {
+            Debug.LogWarning("[TempleSceneManager] HasData=false — gameboard non orienté.\n" +
+                             "Cause probable : la calibration n'a pas été synchronisée vers ce device.\n" +
+                             "Vérifie que PlayerSetup.SyncCalibrationRpc est bien envoyé depuis AR.");
+            return;
+        }
+
+        // ── Direction VR→AR en espace VIRTUEL TempleScene ───────────────────
+        // SpawnARPosition est en espace physique (monde Scene.unity).
+        // VRSpawnRotationDirect convertit physique → virtuel TempleScene.
+        Vector3 spawnPhysical = CalibrationPersistence.SpawnARPosition;
+        spawnPhysical.y = 0f;
+        Vector3 toAR = CalibrationPersistence.VRSpawnRotationDirect * spawnPhysical;
+        toAR.y = 0f;
+
+        if (toAR.sqrMagnitude < 0.001f)
+        {
+            // AR trop proche de VR ou sync manquant → fallback sur VR.forward en espace virtuel.
+            toAR = CalibrationPersistence.VRSpawnRotationDirect * Vector3.forward;
+            Debug.LogWarning($"[TempleSceneManager] toAR ≈ 0 après conversion — " +
+                             $"fallback sur VR forward virtuel ({toAR:F2}).  " +
+                             $"spawnPhysical={spawnPhysical:F3}");
+        }
+
+        // ── Calcul direct de l'angle Y ────────────────────────────────────────
+        // SignedAngle(right, toAR, up) = angle de rotation Y tel que Euler(0,angle,0)*right = toAR.
+        // C'est exactement la rotation qui fait pointer +X du gameboard vers AR.
+        float angle = Vector3.SignedAngle(Vector3.right, toAR.normalized, Vector3.up);
+        _gameboard.rotation = Quaternion.Euler(0f, angle + _gameboardRotationOffset, 0f);
+
+        Debug.Log($"[TempleSceneManager] ✓ Gameboard aligné — " +
+                  $"spawnPhysical={spawnPhysical:F3}  toAR_virtuel={toAR:F2}  " +
+                  $"angle={angle:F1}°  vrYaw={CalibrationPersistence.VRSpawnRotationDirect.eulerAngles.y:F1}°  " +
+                  $"rot={_gameboard.rotation.eulerAngles:F1}°");
     }
 
     // ── Positionnement des joueurs ─────────────────────────────────────────────
 
-    private void PositionnerJoueur()
-    {
-        if (XRRigSwitcher.IsVRMode)
-            PositionnerVR();
-        else
-            PositionnerAR();
-    }
+    // PositionnerJoueur() supprimé : Start() appelle directement PositionnerVR()
+    // et PositionnerAR() sur chaque device afin que les deux XR Origins soient
+    // positionnés (même l'inactif) — nécessaire pour AlignGameboard().
 
     /// <summary>
     /// Positionne le XR Origin VR pour que Camera.main VR soit à (0, 0, 0) — ancre de référence.
@@ -80,27 +153,12 @@ public class TempleSceneManager : MonoBehaviour
             return;
         }
 
-        Camera vrCam = Camera.main;
+        // Mapping DIRECT physique→virtuel : VR placé avec sa rotation physique réelle.
+        // Pas de VRSpawnRotation (qui remapperait physical forward→+X virtuel).
+        // Le gameboard s'alignera sur l'axe VR→AR réel via AlignGameboard().
+        vrOrigin.rotation = CalibrationPersistence.VRSpawnRotationDirect;
+        vrOrigin.position = CalibrationPersistence.VRSpawnPosition; // toujours (0,0,0)
 
-        // Étape 1 — Capturer la position caméra dans l'espace LOCAL du XR Origin AVANT rotation.
-        // camLocalFromOrigin est constant : il représente la structure physique du rig (Camera Offset + tracking).
-        // camWorldPos = origin.rotation * camLocalFromOrigin + origin.position
-        // → pour placer camWorldPos à target après changement de rotation :
-        //   new_origin.pos = target - new_rotation * camLocalFromOrigin
-        Vector3 camLocalFromOrigin = vrOrigin.InverseTransformPoint(
-            vrCam != null ? vrCam.transform.position : vrOrigin.position);
-
-        // Étape 2 — Appliquer la rotation (alignement physique → virtuel).
-        vrOrigin.rotation = CalibrationPersistence.VRSpawnRotation;
-
-        // Étape 3 — Positionner l'origine pour que la caméra VR arrive exactement à VRSpawnPosition.
-        vrOrigin.position = CalibrationPersistence.VRSpawnPosition
-                            - vrOrigin.rotation * camLocalFromOrigin;
-
-        Debug.Log($"[TempleSceneManager] ✓ Joueur VR positionné à (0,0,0) — " +
-                  $"XROrigin={vrOrigin.position:F3} " +
-                  $"(spawnDist={CalibrationPersistence.SpawnDistance:F3}m) " +
-                  $"rot={vrOrigin.rotation.eulerAngles:F1}");
     }
 
     /// <summary>
@@ -126,63 +184,87 @@ public class TempleSceneManager : MonoBehaviour
         // explicitement pour garantir une vitesse de déplacement normale (1:1).
         arOrigin.localScale = Vector3.one;
 
-        // ── 2. Positionner selon la calibration ───────────────────────────────
-        Camera arCam = Camera.main;
+        // ── 2. Positionner selon la calibration ──────────────────────────────
+        if (!CalibrationPersistence.HasData)
+        {
+            Debug.LogWarning("[TempleSceneManager] HasData=false — AR non positionné.");
+            return;
+        }
 
-        // Même logique rotation-puis-position que pour le VR.
-        // Étape 1 — Capturer l'offset caméra en espace local AVANT rotation.
-        Vector3 camLocalFromOrigin = arOrigin.InverseTransformPoint(
-            arCam != null ? arCam.transform.position : arOrigin.position);
+        // SpawnARPosition/Rotation sont en espace physique (Scene.unity).
+        // VRSpawnRotationDirect convertit physique → espace virtuel TempleScene
+        // (même conversion que pour le gameboard).
+        Quaternion vrRot      = CalibrationPersistence.VRSpawnRotationDirect;
+        Vector3    spawnPosPhys = CalibrationPersistence.SpawnARPosition;
+        spawnPosPhys.y = 0f;
 
-        // Étape 2 — Appliquer la rotation (alignement physique AR→VR → direction -X virtuel).
-        arOrigin.rotation = CalibrationPersistence.ARSpawnRotation;
-
-        // Étape 3 — Positionner l'origine pour que la caméra AR arrive à ARSpawnPosition.
-        // ARSpawnPosition = (SpawnDistance, 0, 0) — l'AR est en face du VR dans TempleScene.
-        arOrigin.position = CalibrationPersistence.ARSpawnPosition
-                            - arOrigin.rotation * camLocalFromOrigin;
+        arOrigin.position = vrRot * spawnPosPhys;
+        arOrigin.rotation = vrRot * CalibrationPersistence.SpawnARRotation;
 
         Debug.Log($"[TempleSceneManager] ✓ Joueur AR positionné — " +
-                  $"XROrigin={arOrigin.position:F3}  scale=1  " +
-                  $"(ancre={CalibrationPersistence.ARSpawnPosition:F3}  " +
-                  $"calibration={CalibrationPersistence.HasData})");
+                  $"physPos={spawnPosPhys:F3}  virtPos={arOrigin.position:F3}  " +
+                  $"vrYaw={vrRot.eulerAngles.y:F1}°  scale=1  calibration={CalibrationPersistence.HasData}");
     }
 
     // ── Helpers XR Origin ─────────────────────────────────────────────────────
 
     /// <summary>
-    /// Renvoie le Transform du XR Origin VR (Inspector → auto-détection).
-    /// En mode VR seul le VR XROrigin est actif → FindAnyObjectByType le trouve sans ambiguïté.
+    /// Renvoie le Transform du XR Origin VR.
+    /// Cherche dans les objets ACTIFS ET INACTIFS car sur le device AR,
+    /// le VR XR Origin est désactivé par XRRigSwitcher.
+    /// Priorité : champ Inspector → recherche par nom ("vr").
     /// </summary>
     private Transform ObtenirVROrigin()
     {
         if (_vrXROrigin != null)
             return _vrXROrigin;
 
-        XROrigin found = FindAnyObjectByType<XROrigin>();
-        if (found != null)
-        {
-            Debug.Log($"[TempleSceneManager] VR XR Origin auto-détecté : '{found.name}'");
-            return found.transform;
-        }
-        return null;
+        return TrouverXROriginParNom("vr");
     }
 
     /// <summary>
-    /// Renvoie le Transform du XR Origin AR (Inspector → auto-détection).
-    /// En mode AR seul l'AR XROrigin est actif → FindAnyObjectByType le trouve sans ambiguïté.
+    /// Renvoie le Transform du XR Origin AR (Mobile AR).
+    /// Cherche dans les objets ACTIFS ET INACTIFS car sur le device VR,
+    /// le AR XR Origin est désactivé par XRRigSwitcher.
+    /// Priorité : champ Inspector → recherche par nom ("ar").
     /// </summary>
     private Transform ObtenirAROrigin()
     {
         if (_arXROrigin != null)
             return _arXROrigin;
-
-        XROrigin found = FindAnyObjectByType<XROrigin>();
-        if (found != null)
+    
+        var arPlayer = GameObject.FindWithTag("ARPlayer");
+        if (arPlayer != null)
         {
-            Debug.Log($"[TempleSceneManager] AR XR Origin auto-détecté : '{found.name}'");
-            return found.transform;
+            Debug.Log($"[TempleSceneManager] XR Origin AR auto-détecté via tag 'ARPlayer' : '{arPlayer.name}'");
+            return arPlayer.transform;
         }
+    
+        Debug.LogWarning("[TempleSceneManager] Aucun GameObject avec le tag 'ARPlayer' trouvé. " +
+                         "Assigne _arXROrigin dans l'Inspector ou vérifie le tag.");
+        return null;
+    }
+
+    /// <summary>
+    /// Parcourt tous les XROrigin de la scène (actifs et inactifs) et retourne
+    /// le premier dont le nom contient <paramref name="nomPartiel"/> (insensible à la casse).
+    /// </summary>
+    private Transform TrouverXROriginParNom(string nomPartiel)
+    {
+        var allOrigins = FindObjectsByType<XROrigin>(
+            FindObjectsInactive.Include, FindObjectsSortMode.None);
+
+        foreach (var o in allOrigins)
+        {
+            if (o.name.IndexOf(nomPartiel, System.StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                Debug.Log($"[TempleSceneManager] XR Origin '{nomPartiel}' auto-détecté : '{o.name}'");
+                return o.transform;
+            }
+        }
+
+        Debug.LogWarning($"[TempleSceneManager] Aucun XR Origin contenant '{nomPartiel}' trouvé. " +
+                         "Assigne le champ dans l'Inspector ou vérifie le nom du GameObject.");
         return null;
     }
 

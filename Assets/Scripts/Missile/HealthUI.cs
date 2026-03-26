@@ -1,12 +1,19 @@
 using UnityEngine;
 using TMPro;
-using Unity.Netcode;
 using System.Collections;
+using Unity.Netcode;
 
-public class HealthUI : NetworkBehaviour
+// MonoBehaviour (pas NetworkBehaviour) : HealthUI ne fait aucun RPC ni NetworkVariable.
+// Il lit simplement PlayerHealth.GetHealth() (déjà synchronisé par NGO).
+// Utiliser NetworkBehaviour obligerait à avoir un NetworkObject bien configuré
+// → OnNetworkSpawn() ne se déclenche jamais si le setup réseau est manquant → HP jamais affiché.
+public class HealthUI : MonoBehaviour
 {
     [Header("Texte vie")]
     public TextMeshPro healthText;
+    // Offset local par rapport au parent (player body est à Y=0).
+    // Y=2.0 → au-dessus de la tête. Z=0.3 → légèrement devant.
+    // Y=-0.2 plaçait le texte sous le sol → INVISIBLE.
     public Vector3 offset = new Vector3(0.3f, -0.2f, 0.5f);
 
     [Header("Résultat")]
@@ -15,9 +22,9 @@ public class HealthUI : NetworkBehaviour
 
     private PlayerHealth _playerHealth;
 
-    public override void OnNetworkSpawn()
+    private void Start()
     {
-        if (!IsOwner) return;
+        // Start() démarre toujours, sans dépendre d'un NetworkObject.
         StartCoroutine(WaitForPlayerHealth());
     }
 
@@ -66,10 +73,22 @@ public class HealthUI : NetworkBehaviour
         UpdateText(_playerHealth.GetHealth());
     }
 
-    public override void OnNetworkDespawn()
+    private void OnDestroy()
     {
         if (_playerHealth != null)
             _playerHealth.OnHealthChangedEvent -= UpdateText;
+    }
+
+    private void LateUpdate()
+    {
+        // Billboard : le texte 3D fait toujours face à la caméra principale.
+        // Sans ça, le TextMeshPro (world space) peut être de dos → invisible.
+        if (healthText == null || !healthText.gameObject.activeSelf) return;
+        Camera cam = Camera.main;
+        if (cam == null) return;
+        Vector3 dir = healthText.transform.position - cam.transform.position;
+        if (dir.sqrMagnitude > 0.001f)
+            healthText.transform.rotation = Quaternion.LookRotation(dir);
     }
 
     private void UpdateText(float value)

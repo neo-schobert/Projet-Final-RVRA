@@ -1,5 +1,4 @@
 {
-    "version": 1,
     "name": "XRI Default Input Actions",
     "maps": [
         {
@@ -3396,34 +3395,6 @@
                     "action": "Spawn Object",
                     "isComposite": false,
                     "isPartOfComposite": true
-                }
-            ]
-        },
-        {
-            "name": "TriggerScene",
-            "id": "38a721ac-ef4e-4378-bef1-6afd138e01d9",
-            "actions": [
-                {
-                    "name": "New action",
-                    "type": "Button",
-                    "id": "95ba1f2e-da8a-42f1-9bc1-51a45ac73a4f",
-                    "expectedControlType": "",
-                    "processors": "",
-                    "interactions": "",
-                    "initialStateCheck": false
-                }
-            ],
-            "bindings": [
-                {
-                    "name": "",
-                    "id": "88d8e31b-bd05-4a7e-8698-91441963052c",
-                    "path": "<XRController>{RightHand}/{PrimaryButton}",
-                    "interactions": "",
-                    "processors": "",
-                    "groups": "",
-                    "action": "New action",
-                    "isComposite": false,
-                    "isPartOfComposite": false
                 }
             ]
         }

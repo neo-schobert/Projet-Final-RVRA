@@ -738,7 +738,7 @@ MonoBehaviour:
   m_SphereCastDistanceBuffer: -0.05
   m_SphereCastLayerMask:
     serializedVersion: 2
-    m_Bits: 179
+    m_Bits: 51
   m_SphereCastTriggerInteraction: 1
 --- !u!1 &1470279098769358944
 GameObject:

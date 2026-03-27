@@ -168,15 +168,15 @@ public class ARProximityCalibration : NetworkBehaviour
     //  LIFECYCLE
     // ═══════════════════════════════════════════════════════════════════════════
 
-    private void Awake()
-    {
-        // Initialise le VideoPlayer et la RenderTexture dès Awake
-        // pour que la texture soit prête avant le premier frame
-        InitVideoPlayer();
-    }
-
     private void Start()
     {
+        // InitVideoPlayer() déplacé de Awake() vers Start() :
+        // Sur iOS/Metal, VideoPlayer.SetTargetAudioSource(0, audioSrc) appelé en
+        // Awake() peut crasher quand _introClip est null (0 audio tracks → index 0
+        // invalide → exception native non catchée → crash au démarrage).
+        // En Start(), le pipeline Metal est déjà initialisé → appel sûr.
+        InitVideoPlayer();
+
         // Ce script (côté comportement AR) ne s'exécute pas sur le casque VR.
         // La partie réseau (NetworkBehaviour) reste active sur tous les clients
         // pour recevoir les RPC de synchronisation vidéo.
@@ -276,7 +276,25 @@ public class ARProximityCalibration : NetworkBehaviour
         // Lie le son à l'AudioSource sur ce GO (ajouté via [RequireComponent])
         AudioSource audioSrc = GetComponent<AudioSource>();
         audioSrc.spatialBlend = 0f; // 2D — pas de spatialisation
-        _videoPlayer.SetTargetAudioSource(0, audioSrc);
+
+        // Guard iOS : SetTargetAudioSource(0, …) ne doit être appelé que si
+        // le VideoPlayer a au moins une piste audio (audioTrackCount > 0).
+        // Avec un clip null, audioTrackCount = 0 → index 0 invalide → exception
+        // native non catchée sur iOS/Metal → crash au démarrage.
+        // Le binding est effectué à PrepareCompleted quand le clip est chargé.
+        if (_introClip != null)
+        {
+            _videoPlayer.SetTargetAudioSource(0, audioSrc);
+        }
+        else
+        {
+            // Bind différé : dès que le clip est connu et préparé, on lie l'AudioSource.
+            _videoPlayer.prepareCompleted += vp =>
+            {
+                if (vp.audioTrackCount > 0)
+                    vp.SetTargetAudioSource(0, audioSrc);
+            };
+        }
 
         // Callback de fin natif (backup si _videoDuration est imprécis).
         // IMPORTANT : cache aussi _activeVideoPanel ici, car PlayIntroRoutine() vérifie

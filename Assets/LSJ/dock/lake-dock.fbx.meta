@@ -3,7 +3,17 @@ guid: d419cc8688241446fb08574e0a6a35cf
 ModelImporter:
   serializedVersion: 24200
   internalIDToNameTable: []
-  externalObjects: {}
+  externalObjects:
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: beam
+    second: {fileID: 2100000, guid: 51bb917c10fa343e8b03d752959317d6, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: dock
+    second: {fileID: 2100000, guid: ae2dd2c99f55b41f9a4c10196a6da787, type: 2}
   materials:
     materialImportMode: 2
     materialName: 0

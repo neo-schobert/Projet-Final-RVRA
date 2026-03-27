@@ -28,8 +28,7 @@ public class MissileLauncher : NetworkBehaviour
     // Anti double-tir : timestamp du dernier tir. Ignore tout nouveau tir
     // dans les 0.4 s suivants (corrige le bug "2 missiles par tap" sur Android
     // dû à TouchPhase.Began pouvant être reporté sur 2 frames consécutives).
-    private float _lastFireTime = -10f;
-    private const float FireCooldown = 0.4f;
+
 
     public override void OnNetworkSpawn()
     {
@@ -52,9 +51,6 @@ public class MissileLauncher : NetworkBehaviour
             if (_arCamera == null) return;
         }
 
-        if (Time.time - _lastFireTime < FireCooldown) return;
-
-        if (!ARProximityCalibration.IsGameStarted) return;
 
         // ── Détection de l'input selon la plateforme ─────────────────────────
         // UNITY_EDITOR : clic gauche souris  → simule un tap sur l'écran AR.

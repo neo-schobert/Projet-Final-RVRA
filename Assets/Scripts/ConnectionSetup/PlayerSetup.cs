@@ -74,7 +74,10 @@ public class PlayerSetup : NetworkBehaviour
 
         Vector3 camPos = cam.transform.position;
 
-        transform.position = new Vector3(camPos.x, camPos.y, camPos.z);
+        if (camPos.y > 10f) return;
+        
+        
+        transform.position = new Vector3(camPos.x, 0f, camPos.z);
         transform.rotation = Quaternion.Euler(0f, cam.transform.eulerAngles.y, 0f);
     }
 

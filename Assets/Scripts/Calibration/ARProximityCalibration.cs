@@ -1046,8 +1046,9 @@ public class ARProximityCalibration : NetworkBehaviour
     //  CLEANUP
     // ═══════════════════════════════════════════════════════════════════════════
 
-    private void OnDestroy()
+    public override void OnDestroy()
     {
+        base.OnDestroy();
         // Libérer la RenderTexture GPU proprement
         if (_renderTexture != null)
         {

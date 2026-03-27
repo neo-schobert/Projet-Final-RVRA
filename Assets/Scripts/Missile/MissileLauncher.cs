@@ -9,6 +9,10 @@ public class MissileLauncher : NetworkBehaviour
     public float arcHeight = 50f;
     public float flightDuration = 3f;
 
+    [Tooltip("Nombre maximum de missiles non-explosés simultanément. " +
+             "Le tir est bloqué tant que cette limite est atteinte.")]
+    public int maxActiveMissiles = 2;
+
     [Header("Explosion")]
     public float explosionRadius = 10f;
     public float explosionDamage = 100f;
@@ -90,6 +94,24 @@ public class MissileLauncher : NetworkBehaviour
         if (missilePrefab == null)
         {
             Debug.LogError("[MissileLauncher] missilePrefab non assigné dans l'Inspector !");
+            return;
+        }
+
+        // ── Limite de missiles actifs ──────────────────────────────────────────
+        // Compte les missiles en vol qui n'ont pas encore explosé.
+        // Les missiles explosés (IsExploded=true) ne comptent pas même s'ils
+        // sont encore dans la scène (ils attendent leur Despawn de 1.5 s).
+        int actifs = 0;
+        foreach (var m in FindObjectsByType<MissileMovement>(FindObjectsSortMode.None))
+        {
+            if (m.IsLaunched && !m.IsExploded)
+                actifs++;
+        }
+
+        if (actifs >= maxActiveMissiles)
+        {
+            Debug.Log($"[MissileLauncher] Tir bloqué — {actifs}/{maxActiveMissiles} " +
+                      "missiles actifs en vol.");
             return;
         }
         GameObject missile = Instantiate(missilePrefab, startPos, Quaternion.identity);

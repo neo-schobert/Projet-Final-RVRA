@@ -56,6 +56,12 @@ public class MissileMovement : NetworkBehaviour
     private bool    _launched;
     private bool    _exploded; // garde : TriggerExplosionEffects() ne s'appelle qu'une fois
 
+    /// <summary>True dès que LaunchRpc a été reçu et le missile est en vol.</summary>
+    public bool IsLaunched => _launched;
+
+    /// <summary>True dès que le missile a explosé (même s'il n'est pas encore despawné).</summary>
+    public bool IsExploded => _exploded;
+
     // ── RPC broadcast ─────────────────────────────────────────────────────────
     // SendTo.Everyone garantit que VR ET AR reçoivent les paramètres de vol
     // et démarrent l'animation du missile. Sans ça, _launched reste false
@@ -88,7 +94,11 @@ public class MissileMovement : NetworkBehaviour
     // ── Update : vol parabolique + volume de vol + déclenchement explosion ───
     void Update()
     {
-        if (!_launched) return;
+        // Arrêt immédiat si le missile a explosé (interception ou impact normal).
+        // Sans ce guard, le missile continue de voler après ForceExplode() car
+        // _launched reste true → il atteint le sol → DespawnApresExplosion fait
+        // OverlapSphere au sol → dégâts injustifiés sur le joueur VR.
+        if (!_launched || _exploded) return;
 
         _elapsed += Time.deltaTime;
         float t = Mathf.Clamp01(_elapsed / _duration);
@@ -291,6 +301,45 @@ public class MissileMovement : NetworkBehaviour
         // VR n'avait pas le temps d'atteindre t>=1f avant le Despawn → pas d'explosion VR.
         yield return new WaitForSeconds(1.5f);
 
+        if (IsSpawned)
+            GetComponent<NetworkObject>().Despawn();
+    }
+
+    // ── Interception externe (MissileInterceptor) ─────────────────────────────
+
+    /// <summary>
+    /// Force l'explosion immédiate du missile depuis un objet externe (MissileInterceptor).
+    /// Sûr à appeler sur tous les clients simultanément : _exploded empêche les doublons.
+    ///
+    /// DIFFÉRENCE avec l'impact normal :
+    ///   • _launched = false   → Update() s'arrête immédiatement, missile figé en l'air.
+    ///   • Pas de dégâts       → le missile a été intercepté avant d'atteindre le joueur VR.
+    ///   • DespawnSansDegatts  → Despawn propre après 1.5 s (laisse le VFX se lire).
+    /// </summary>
+    public void ForceExplode()
+    {
+        if (!_launched || _exploded) return;
+
+        _exploded = true;
+        _launched = false; // ← stoppe Update() immédiatement : le missile ne vole plus
+
+        StopFlightAudio();
+        TriggerExplosionEffects();
+
+        // Pas de dégâts : missile intercepté = ne touche pas le joueur VR.
+        // DespawnSansDegats attend 1.5 s pour laisser le VFX se jouer.
+        if (IsOwner)
+            StartCoroutine(DespawnSansDegats());
+    }
+
+    /// <summary>
+    /// Despawn réseau sans appliquer de dégâts.
+    /// Utilisé après une interception (ForceExplode) : le missile a explosé en l'air
+    /// et n'a pas atteint le joueur → aucun dégât ne doit être appliqué.
+    /// </summary>
+    private IEnumerator DespawnSansDegats()
+    {
+        yield return new WaitForSeconds(1.5f);
         if (IsSpawned)
             GetComponent<NetworkObject>().Despawn();
     }

@@ -47,29 +47,38 @@ public class PlayerSetup : NetworkBehaviour
     private void Update()
     {
         if (!IsOwner) return;
-
-        if (_cam == null)
-        {
-            _cam = Camera.main;
-            if (_cam == null) return;
-            Debug.Log($"[PlayerSetup] Caméra trouvée en Update() → {_cam.name}");
-        }
-
         AppliquerPosition();
     }
 
     /// <summary>
     /// Suit Camera.main XZ à Y=0 (position pied du joueur dans l'espace virtuel).
+    ///
     /// Camera.main = position réelle du joueur = XR Origin + ARCore localPosition.
     /// C'est la cible correcte : elle bouge avec le joueur physique.
     /// L'offset entre Camera.main et XR Origin est normal (décalage ARCore depuis
     /// le début de session) — XR Origin est une ancre fixe, pas la position du joueur.
+    ///
+    /// GARDE vue aérienne (AR uniquement) :
+    ///   En vue aérienne, XR Origin est téléporté à (33, 75, 94) dans le monde virtuel.
+    ///   Camera.main.worldPosition hérite de cette altitude (~75 u).
+    ///   Sans le guard, l'avatar serait placé à (33, 0, 94) sur la map au lieu de
+    ///   rester à la position calibrée du joueur → avatar invisible ou loin du VR.
+    ///   Seuil 10 u : gameplay normal → caméra à ~1.5 m / vue aérienne → ~75 u.
     /// </summary>
     private void AppliquerPosition()
     {
-        Vector3 camPos = _cam.transform.position;
+        // Toujours re-fetcher Camera.main (pas de cache) → pas de référence périmée
+        // si la caméra change (scene reload, ARCore reinit, etc.).
+        Camera cam = Camera.main;
+        if (cam == null) return;
+
+        Vector3 camPos = cam.transform.position;
+
+        // Vue aérienne AR : Camera.main est à haute altitude virtuelle → ignorer
+        if (camPos.y > 10f) return;
+
         transform.position = new Vector3(camPos.x, 0f, camPos.z);
-        transform.rotation = Quaternion.Euler(0f, _cam.transform.eulerAngles.y, 0f);
+        transform.rotation = Quaternion.Euler(0f, cam.transform.eulerAngles.y, 0f);
     }
 
 

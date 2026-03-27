@@ -179,8 +179,8 @@ public class TempleSceneManager : MonoBehaviour
 
         Vector3 arPos = CalibrationPersistence.ArPhysicalPosition;
         Vector3 vrPos = CalibrationPersistence.VrPosition;
-        Vector3 buggedPositionOffset = new Vector3(0f, 0f, 0f);
-        float buggedYawOffset = 0f;
+        Vector3 buggedPositionOffset = new Vector3(-0.325006f, 0f, 8.078408f);
+        float buggedYawOffset = 328f;
 
         Vector3    targetPos = new Vector3(arPos.x - vrPos.x + buggedPositionOffset.x, 0f, arPos.z - vrPos.z + buggedPositionOffset.z);
         Quaternion targetRot = Quaternion.Euler(0f, CalibrationPersistence.ArYaw + buggedYawOffset, 0f);

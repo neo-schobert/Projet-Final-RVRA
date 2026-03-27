@@ -93,6 +93,12 @@ public class ARProximityCalibration : NetworkBehaviour
              "1920×1080 pour une qualité maximale, 1280×720 pour économiser la mémoire GPU.")]
     [SerializeField] private Vector2Int _renderTextureResolution = new Vector2Int(1920, 1080);
 
+    [Tooltip("Scale du canvas VR (World Space). " +
+             "0.002 → 3.84 m de large à 2 m (grand). " +
+             "0.0015 → 2.88 m (moyen). 0.001 → 1.92 m (petit). " +
+             "Ajuste à la volée sans recompiler.")]
+    [SerializeField] private float _vrVideoPanelScale = 0.001f;
+
     // ═══════════════════════════════════════════════════════════════════════════
     //  INSPECTOR — CALIBRATION UI
     // ═══════════════════════════════════════════════════════════════════════════
@@ -153,7 +159,10 @@ public class ARProximityCalibration : NetworkBehaviour
     // ── Vidéo ─────────────────────────────────────────────────────────────────
     private VideoPlayer    _videoPlayer;
     private RenderTexture  _renderTexture;
-    private bool           _videoIsPlaying = false;
+    private bool           _videoIsPlaying  = false;
+    // Référence au panel actif (VR ou AR) — partagée entre PlayIntroRoutine()
+    // et le callback loopPointReached pour garantir qu'il est toujours caché.
+    private GameObject     _activeVideoPanel = null;
 
     // ═══════════════════════════════════════════════════════════════════════════
     //  LIFECYCLE
@@ -269,14 +278,27 @@ public class ARProximityCalibration : NetworkBehaviour
         audioSrc.spatialBlend = 0f; // 2D — pas de spatialisation
         _videoPlayer.SetTargetAudioSource(0, audioSrc);
 
-        // Callback de fin natif (backup si _videoDuration est imprécis)
+        // Callback de fin natif (backup si _videoDuration est imprécis).
+        // IMPORTANT : cache aussi _activeVideoPanel ici, car PlayIntroRoutine() vérifie
+        // _videoIsPlaying après WaitForSeconds. Si loopPointReached fire en premier,
+        // _videoIsPlaying passe à false → le if() dans la coroutine est sauté →
+        // sans ce cache, le panel resterait visible indéfiniment (bug "écran noir AR").
         _videoPlayer.loopPointReached += _ =>
         {
             if (_videoIsPlaying)
             {
                 _videoIsPlaying = false;
+
+                // Cacher le panel (VR ou AR) quoi qu'il arrive
+                if (_activeVideoPanel != null)
+                {
+                    _activeVideoPanel.SetActive(false);
+                    _activeVideoPanel = null;
+                }
+
                 if (_backgroundMusic != null)
                     _backgroundMusic.UnPause();
+
                 OnIntroVideoFinished();
             }
         };
@@ -333,8 +355,13 @@ public class ARProximityCalibration : NetworkBehaviour
         rawRT.offsetMin = Vector2.zero;
         rawRT.offsetMax = Vector2.zero;
 
-        panelGO.SetActive(false);
-        _arVideoPanel = panelGO;
+        // On stocke le CANVAS (canvasGO) et non le panel interne (panelGO).
+        // Raison : si on désactive seulement panelGO, canvasGO reste actif avec
+        // sortingOrder=20 (ScreenSpaceOverlay) → fond noir visible après la vidéo.
+        // Désactiver canvasGO garantit que RIEN du canvas n'est rendu après la vidéo.
+        // Le panelGO (enfant) est actif par défaut → visible dès que canvasGO est activé.
+        canvasGO.SetActive(false);   // caché initialement
+        _arVideoPanel = canvasGO;    // contrôle via le canvas parent
 
         Debug.Log("[ARProximityCalibration] AR_VideoPanel créé automatiquement.");
     }
@@ -369,7 +396,7 @@ public class ARProximityCalibration : NetworkBehaviour
             canvasGO.transform.SetParent(vrCam.transform, false);
             canvasGO.transform.localPosition = new Vector3(0f, 0f, 2f); // 2 m devant
             canvasGO.transform.localRotation = Quaternion.identity;
-            canvasGO.transform.localScale    = Vector3.one * 0.002f;
+            canvasGO.transform.localScale    = Vector3.one * _vrVideoPanelScale;
             canvas.worldCamera               = vrCam; // nécessaire pour le rendu WorldSpace en VR
         }
 
@@ -460,10 +487,11 @@ public class ARProximityCalibration : NetworkBehaviour
         if (_arRawImage != null && _arRawImage.texture == null)
             _arRawImage.texture = _renderTexture;
 
-        // Afficher le bon panel selon la plateforme locale
-        GameObject panel = XRRigSwitcher.IsVRMode ? _vrVideoPanel : _arVideoPanel;
-        if (panel != null)
-            panel.SetActive(true);
+        // Afficher le bon panel selon la plateforme locale et le stocker dans
+        // _activeVideoPanel pour que loopPointReached puisse aussi le cacher.
+        _activeVideoPanel = XRRigSwitcher.IsVRMode ? _vrVideoPanel : _arVideoPanel;
+        if (_activeVideoPanel != null)
+            _activeVideoPanel.SetActive(true);
         else
             Debug.LogWarning("[ARProximityCalibration] Panel vidéo null pour ce client. " +
                              "La vidéo joue en arrière-plan sans rendu visible.");
@@ -481,20 +509,24 @@ public class ARProximityCalibration : NetworkBehaviour
                   $"durée={_videoDuration}s).");
 
         // Attendre la durée déclarée.
-        // Le callback loopPointReached (Awake) sert de backup si le clip finit
+        // Le callback loopPointReached sert de backup si le clip finit
         // légèrement avant _videoDuration (arrondi, frameRate variable).
         yield return new WaitForSeconds(_videoDuration);
 
-        // Stopper proprement si le callback n'a pas déjà tout géré
+        // Cacher le panel DANS TOUS LES CAS — même si loopPointReached a déjà
+        // mis _videoIsPlaying à false (bug "écran noir AR" sans cette ligne).
+        if (_activeVideoPanel != null)
+        {
+            _activeVideoPanel.SetActive(false);
+            _activeVideoPanel = null;
+        }
+
+        // Stopper proprement si loopPointReached n'a pas déjà tout géré
         if (_videoIsPlaying)
         {
             _videoIsPlaying = false;
             _videoPlayer.Stop();
 
-            if (panel != null)
-                panel.SetActive(false);
-
-            // Reprendre la musique de fond
             if (_backgroundMusic != null)
                 _backgroundMusic.UnPause();
 

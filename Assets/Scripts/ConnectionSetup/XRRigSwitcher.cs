@@ -56,20 +56,37 @@ public class XRRigSwitcher : MonoBehaviour
 //         return true;
 // #endif
 
-        if (!XRSettings.isDeviceActive)
+        // Sur iOS, XRSettings peut ne pas être initialisé au moment du Awake().
+        // On tente l'accès dans un try/catch pour éviter un crash au démarrage.
+        try
+        {
+            if (!XRSettings.isDeviceActive)
+            {
+                Debug.Log("[XRRigSwitcher] XRSettings.isDeviceActive = false → AR mode");
+                return false;
+            }
+
+            // loadedDeviceName peut être null selon le provider XR → null-check explicite
+            string deviceName = XRSettings.loadedDeviceName ?? string.Empty;
+            deviceName = deviceName.ToLower();
+            Debug.Log($"[XRRigSwitcher] loadedDeviceName='{deviceName}'");
+
+            if (deviceName.Contains("hololens")  ||
+                deviceName.Contains("magic leap") ||
+                deviceName.Contains("arcore")     ||
+                deviceName.Contains("arkit"))
+            {
+                Debug.Log("[XRRigSwitcher] Device AR/passthrough détecté → AR mode");
+                return false;
+            }
+
+            Debug.Log("[XRRigSwitcher] Device VR détecté → VR mode");
+            return true;
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogWarning($"[XRRigSwitcher] DetectVR() exception : {e.Message} → fallback AR mode");
             return false;
-
-
-        string deviceName = XRSettings.loadedDeviceName.ToLower();
-
-        if (deviceName.Contains("hololens")  ||
-            deviceName.Contains("magic leap") ||
-            deviceName.Contains("arcore")     ||
-            deviceName.Contains("arkit"))
-            return false;
-
-
-
-        return true;
+        }
     }
 }

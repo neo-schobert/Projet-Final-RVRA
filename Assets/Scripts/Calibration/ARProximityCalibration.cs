@@ -139,6 +139,9 @@ public class ARProximityCalibration : NetworkBehaviour
     /// <summary>True après une première calibration réussie.</summary>
     public static bool IsCalibrated { get; private set; }
 
+    /// <summary>True quand la vidéo d'intro est terminée et que le gameplay a commencé.</summary>
+    public static bool IsGameStarted { get; private set; }
+
     // ── Calibration UI ────────────────────────────────────────────────────────
     private Coroutine _feedbackRoutine;
     private GameObject _lancerJeuPanel; // créé à runtime dans CreerUIAutomatique()
@@ -567,6 +570,11 @@ public class ARProximityCalibration : NetworkBehaviour
     private void OnIntroVideoFinished()
     {
         Debug.Log("[ARProximityCalibration] ✅ Vidéo d'intro terminée — lancement du jeu.");
+
+        // Signale à tous les systèmes (ex: MissileLauncher) que le gameplay peut commencer.
+        IsGameStarted = true;
+
+        
 
         // ── Message début de jeu (VR) ─────────────────────────────────────────
         if (_vrStartGameMessage != null)

@@ -74,10 +74,7 @@ public class PlayerSetup : NetworkBehaviour
 
         Vector3 camPos = cam.transform.position;
 
-        // Vue aérienne AR : Camera.main est à haute altitude virtuelle → ignorer
-        if (camPos.y > 10f) return;
-
-        transform.position = new Vector3(camPos.x, 0f, camPos.z);
+        transform.position = new Vector3(camPos.x, camPos.y, camPos.z);
         transform.rotation = Quaternion.Euler(0f, cam.transform.eulerAngles.y, 0f);
     }
 

@@ -1,4 +1,5 @@
 {
+    "version": 1,
     "name": "XRI Default Input Actions",
     "maps": [
         {
@@ -3395,6 +3396,34 @@
                     "action": "Spawn Object",
                     "isComposite": false,
                     "isPartOfComposite": true
+                }
+            ]
+        },
+        {
+            "name": "TriggerVR",
+            "id": "545d0f9e-1953-4e21-bed4-adf2aeb320d4",
+            "actions": [
+                {
+                    "name": "tp",
+                    "type": "Button",
+                    "id": "b6fbf3ac-374b-48b6-b8b0-1ff7279dd087",
+                    "expectedControlType": "",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": false
+                }
+            ],
+            "bindings": [
+                {
+                    "name": "",
+                    "id": "84b12d61-42aa-4fcc-a0dc-84c9884f65df",
+                    "path": "<XRController>{RightHand}/{PrimaryButton}",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "",
+                    "action": "tp",
+                    "isComposite": false,
+                    "isPartOfComposite": false
                 }
             ]
         }

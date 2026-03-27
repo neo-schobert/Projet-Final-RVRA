@@ -7,17 +7,18 @@ using UnityEngine.XR.Interaction.Toolkit.Interactables;
 /// À mettre sur le gun dans TempleScene (même GameObject que Shoot.cs).
 ///
 /// Responsabilités :
-///   1. Awake() — lit WasRightHand et désactive XRGrabInteractable AVANT tout Start().
-///      → Empêche le Near-Far Interactor (parent du gun) d'auto-sélectionner le gun via XRI,
-///        ce qui déclencherait Shoot.OnGrabbed() et écraserait GunPersistence.WasRightHand.
+///   1. Awake() — lit WasRightHand ET désactive XRGrabInteractable ET désactive GunAutoGrab,
+///      le TOUT avant que n'importe quel Start() s'exécute.
+///      → Empêche GunAutoGrab.Start() de lancer sa coroutine (Unity n'appelle jamais
+///        Start() sur un composant désactivé).
+///      → Empêche XRI d'auto-sélectionner le gun via le Near-Far Interactor.
 ///   2. Start() — reparente le gun dans la bonne main, réclame l'ownership NGO,
-///        s'abonne à l'action de tir et appelle Shoot.FireLocal() à chaque pression.
+///      lit les InputActionReferences depuis Shoot.cs (plus besoin de les ré-assigner).
 ///
 /// SETUP Inspector :
 ///   • rightHandParent → glisser "Right Controller" (ou l'attach point main droite)
 ///   • leftHandParent  → glisser "Left Controller"  (ou l'attach point main gauche)
-///   • shootActionRight → XRI Right Hand Interaction/Activate
-///   • shootActionLeft  → XRI Left Hand Interaction/Activate
+///   • (shootActionRight / shootActionLeft sont lus automatiquement depuis Shoot.cs)
 /// </summary>
 public class GunTempleSetup : MonoBehaviour
 {
@@ -28,13 +29,6 @@ public class GunTempleSetup : MonoBehaviour
     [Tooltip("Transform parent pour la main gauche (ex : Left Controller)")]
     public Transform leftHandParent;
 
-    [Header("Actions de tir")]
-    [Tooltip("Action trigger main droite — ex : XRI Right Hand Interaction/Activate")]
-    public InputActionReference shootActionRight;
-
-    [Tooltip("Action trigger main gauche — ex : XRI Left Hand Interaction/Activate")]
-    public InputActionReference shootActionLeft;
-
     [Header("Offset dans la main (optionnel)")]
     public Vector3 localPositionInHand = Vector3.zero;
     public Vector3 localRotationInHand = Vector3.zero;
@@ -42,18 +36,14 @@ public class GunTempleSetup : MonoBehaviour
     private InputActionReference _activeAction;
     private Shoot                _shoot;
 
-    // WasRightHand lu en Awake() pour être protégé contre toute écriture
-    // ultérieure par Shoot.OnGrabbed() (qui peut être déclenché par XRI
-    // si XRGrabInteractable n'est pas encore désactivé au moment des Start()).
+    // WasRightHand lu en Awake() — protégé contre toute écriture ultérieure
     private bool _rightHand;
 
     // ── Awake : priorité maximale ─────────────────────────────────────────────
-    // Awake() de TOUS les scripts s'exécute avant le premier Start() de n'importe quel script.
-    // On en profite pour :
-    //   1. Capturer WasRightHand avant que quoi que ce soit ne puisse l'écraser.
-    //   2. Désactiver XRGrabInteractable → le Near-Far Interactor du contrôleur
-    //      (parent du gun) ne peut plus auto-sélectionner le gun → Shoot.OnGrabbed()
-    //      ne sera jamais appelé en TempleScene → WasRightHand reste intact.
+    // • Toutes les Awake() s'exécutent avant TOUS les Start().
+    // • Désactiver GunAutoGrab ICI (et non dans Start) garantit que
+    //   GunAutoGrab.Start() ne sera JAMAIS appelé par Unity → sa coroutine
+    //   ne démarre pas → pas de Reset() ni de SelectEnter() parasites.
     private void Awake()
     {
         if (!XRRigSwitcher.IsVRMode) return;
@@ -62,16 +52,22 @@ public class GunTempleSetup : MonoBehaviour
         _rightHand = GunPersistence.WasRightHand;
         Debug.Log($"[GunTempleSetup] Awake — WasRightHand={_rightHand}  WasHeld={GunPersistence.WasHeld}");
 
-        // 2. Désactivation de XRGrabInteractable
+        // 2. Désactivation de XRGrabInteractable → XRI ne peut plus auto-sélectionner le gun
         var grabbable = GetComponent<XRGrabInteractable>();
         if (grabbable != null)
         {
             grabbable.enabled = false;
-            Debug.Log("[GunTempleSetup] XRGrabInteractable désactivé — auto-grab XRI empêché.");
+            Debug.Log("[GunTempleSetup] XRGrabInteractable désactivé.");
         }
-        else
+
+        // 3. Désactivation de GunAutoGrab AVANT son Start()
+        //    → Unity n'appelle jamais Start() sur un composant désactivé.
+        //    → Sa coroutine ne démarrera jamais → GunPersistence.Reset() ne sera jamais appelé.
+        var autoGrab = GetComponent<GunAutoGrab>();
+        if (autoGrab != null)
         {
-            Debug.LogWarning("[GunTempleSetup] XRGrabInteractable introuvable sur ce GameObject.");
+            autoGrab.enabled = false;
+            Debug.Log("[GunTempleSetup] GunAutoGrab désactivé dès Awake().");
         }
     }
 
@@ -85,14 +81,6 @@ public class GunTempleSetup : MonoBehaviour
             Debug.LogError("[GunTempleSetup] Shoot introuvable sur ce GameObject !");
             return;
         }
-
-        // ── 0. Désactiver GunAutoGrab ─────────────────────────────────────────
-        // GunAutoGrab est conçu pour la scène principale (XRGrabInteractable).
-        // Dans TempleScene le gun est fixé dans la main — GunAutoGrab ne doit
-        // pas tourner : il interfèrerait avec l'action de tir et réinitialiserait
-        // WasRightHand=true via GunPersistence.Reset() à la fin de sa coroutine.
-        var autoGrab = GetComponent<GunAutoGrab>();
-        if (autoGrab != null) autoGrab.enabled = false;
 
         Debug.Log($"[GunTempleSetup] Start — main {(_rightHand ? "droite" : "gauche")}");
 
@@ -111,21 +99,23 @@ public class GunTempleSetup : MonoBehaviour
             transform.SetParent(handParent, false);
             transform.localPosition = localPositionInHand;
             transform.localRotation = Quaternion.Euler(localRotationInHand);
-            Debug.Log($"[GunTempleSetup] ✓ Gun reparenté dans '{handParent.name}' " +
-                      $"(main {(_rightHand ? "droite" : "gauche")}).");
+            Debug.Log($"[GunTempleSetup] ✓ Gun reparenté dans '{handParent.name}'.");
         }
         else
         {
             Debug.LogWarning($"[GunTempleSetup] Parent main {(_rightHand ? "droite" : "gauche")} " +
-                             "non assigné dans l'Inspector — gun laissé dans son parent actuel.");
+                             "non assigné dans l'Inspector !");
         }
 
-        // ── 3. Action de tir ──────────────────────────────────────────────────
-        _activeAction = _rightHand ? shootActionRight : shootActionLeft;
+        // ── 3. Action de tir — lue depuis Shoot.cs (pas besoin de re-assigner) ─
+        // Shoot.cs possède déjà shootActionRight et shootActionLeft assignés dans l'Inspector.
+        // On les réutilise directement : une seule source de vérité, zéro duplication.
+        _activeAction = _rightHand ? _shoot.shootActionRight : _shoot.shootActionLeft;
+
         if (_activeAction == null)
         {
-            Debug.LogError($"[GunTempleSetup] shootAction{(_rightHand ? "Right" : "Left")} " +
-                           "non assigné dans l'Inspector !");
+            Debug.LogError($"[GunTempleSetup] Shoot.shootAction{(_rightHand ? "Right" : "Left")} " +
+                           "est null ! Assigne-le dans l'Inspector sur Shoot.cs.");
             return;
         }
 

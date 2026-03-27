@@ -58,9 +58,15 @@ public class Shoot : NetworkBehaviour
         _currentBullets.OnValueChanged += OnBulletsChanged;
         UpdateAmmoText(_currentBullets.Value);
 
+        // En TempleScene, XRGrabInteractable est désactivé par GunTempleSetup.Awake()
+        // → GetComponent peut retourner null si le composant a été retiré du prefab,
+        //   ou un composant désactivé si juste désactivé. Null-check de sécurité.
         var grabbable = GetComponent<XRGrabInteractable>();
-        grabbable.selectEntered.AddListener(OnGrabbed);
-        grabbable.selectExited.AddListener(OnReleased);
+        if (grabbable != null)
+        {
+            grabbable.selectEntered.AddListener(OnGrabbed);
+            grabbable.selectExited.AddListener(OnReleased);
+        }
     }
 
     public override void OnNetworkDespawn()
@@ -293,11 +299,25 @@ public class Shoot : NetworkBehaviour
         catch { /* haptic non critique, on ignore */ }
     }
 
-    private void OnBulletsChanged(int oldVal, int newVal) => UpdateAmmoText(newVal);
+    private void OnBulletsChanged(int oldVal, int newVal)
+    {
+        UpdateAmmoText(newVal);
+
+        // Munitions épuisées → AR gagne.
+        // IsOwner = seul le propriétaire du gun déclenche (évite le double-trigger multi-clients).
+        if (newVal <= 0 && IsOwner && TempleEndGame.Instance != null)
+            TempleEndGame.Instance.DeclareARWins();
+    }
 
     private void UpdateAmmoText(int value)
     {
         if (ammoText != null)
             ammoText.text = $"{value} / {maxBullets}";
     }
+
+    /// <summary>
+    /// Force la mise à jour de l'affichage munitions.
+    /// Appelé par VRAmmoDisplay après avoir lié ammoText au runtime.
+    /// </summary>
+    public void RefreshAmmoDisplay() => UpdateAmmoText(_currentBullets.Value);
 }

@@ -84,7 +84,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d5a57f767e5e46a458fc5d3c628d0cbb, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Unity.Netcode.Runtime::Unity.Netcode.NetworkObject
-  GlobalObjectIdHash: 2464710449
+  GlobalObjectIdHash: 1245283764
   InScenePlacedSourceGlobalObjectIdHash: 0
   DeferredDespawnTick: 0
   Ownership: 1
@@ -115,7 +115,7 @@ MonoBehaviour:
   _explosionClip: {fileID: 8300000, guid: 6816d6075297048208f03088939df2ed, type: 3}
   _explosionVolume: 1
   _explosionMinDistance: 1
-  _explosionMaxDistance: 30
+  _explosionMaxDistance: 4
   _flightClip: {fileID: 8300000, guid: 0512401d3f57a4d28b30ae91ce037851, type: 3}
   _flightVolume: 1
   _flightMinDistance: 1

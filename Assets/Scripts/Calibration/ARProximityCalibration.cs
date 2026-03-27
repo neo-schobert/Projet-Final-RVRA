@@ -782,7 +782,7 @@ public class ARProximityCalibration : NetworkBehaviour
 
         Vector3 desiredCamXZ = new Vector3(
             vrPos.x + vrForwardXZ.x * offsetDevant,
-            _arXROrigin.position.y,
+            vrPos.y,
             vrPos.z + vrForwardXZ.z * offsetDevant
         );
 
